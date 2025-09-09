@@ -18,7 +18,7 @@ def webhook():
 
     # Check for trigger words
     message_text = data['text'].lower()
-    elif 'clean memes' in message_text:
+    if 'clean memes' in message_text:
         send_message("We're the best!")
     elif 'wsg' in message_text:
         send_message("God is good")
