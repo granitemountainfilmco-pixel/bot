@@ -20,10 +20,12 @@ def webhook():
     if data.get("sender_type") == "bot":
         return '', 200
 
-    # Check for trigger word
+    # Check for trigger words
     message_text = data['text'].lower()
     if 'clean memes' in message_text:
         send_message("We're the best!")
+    elif 'wsg' in message_text:
+        send_message("God is good")
 
     return '', 200
 
