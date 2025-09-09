@@ -34,6 +34,8 @@ def webhook():
         send_message("band kid? crazy.")
     elif 'has joined the group' in message_text:
         send_message("Welcome to clean memes. if you swear you get kicked, if you don't, you get a cookie. read the rules and psa topics for up to date info. Enjoy your time here!")
+    elif 'www.' in message_text:
+        send_message("Delete this, links are not allowed, admins have been notified")
         return '', 200
 
 def send_message(text):
