@@ -16,10 +16,6 @@ def webhook():
     if not data or 'text' not in data:
         return '', 200
 
-    # Avoid infinite loops
-    if data.get("sender_type") == "bot":
-        return '', 200
-
     # Check for trigger words
     message_text = data['text'].lower()
     if 'clean memes' in message_text:
@@ -30,6 +26,8 @@ def webhook():
         send_message("https://uploads.dailydot.com/2024/12/cat-laughing-4.jpg?auto=compress&fm=pjpg")
     elif 'clanker' in message_text:
         send_message("nuh uh")
+    elif 'Welcome to Clean Memes! Read the rules in the rules topic and most importantly, have fun! We yap a lot, so you might want to mute the chat. Also, if you stay, I’ll give you a cookie. 🍪 ' in message_text:
+        send_message("You stole that from left kidney")
 
     return '', 200
 
