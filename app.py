@@ -18,22 +18,18 @@ def webhook():
 
     # Check for trigger words
     message_text = data['text'].lower()
-    if '🍪' in message_text:
-        send_message("You stole that from left kidney")
     elif 'clean memes' in message_text:
         send_message("We're the best!")
     elif 'wsg' in message_text:
         send_message("God is good")
     elif 'bye' in message_text:
         send_message("cya")
-    elif 'clanker' in message_text:
-        send_message("nuh uh")
     elif 'has left the group' in message_text:
         send_message("GAY")
     elif 'wsg chat just got back from band practice' in message_text:
         send_message("band kid? crazy.")
     elif 'has joined the group' in message_text:
-        send_message("Welcome to clean memes. if you swear you get kicked, if you don't, you get a cookie. read the rules and psa topics for up to date info. Enjoy your time here!")
+        send_message("Welcome to Clean Memes, check the rules and announcement topics before chatting!")
     elif 'www.' in message_text:
         send_message("Delete this, links are not allowed, admins have been notified")
         return '', 200
