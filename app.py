@@ -4,30 +4,28 @@ import os
 
 app = Flask(__name__)
 
-# GroupMe API settings (use environment variables in Render if possible)
-ACCESS_TOKEN = os.getenv("ACCESS_TOKEN", "gLQYFRJ45TWBhuDlAGFlU3t1132qDJGrA3vUQ6rx")
-BOT_ID = os.getenv("BOT_ID", "b735f26b7a373dfbd15c49f29d")
-
+# GroupMe API settings (from Render environment variables)
+ACCESS_TOKEN = os.getenv("ACCESS_TOKEN")
+BOT_ID = os.getenv("BOT_ID")
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
     data = request.get_json()
 
-    # Validate incoming webhook
+    # Ignore empty payloads
     if not data or 'text' not in data:
         return '', 200
 
-    # Avoid bot loops
+    # Avoid infinite loops
     if data.get("sender_type") == "bot":
         return '', 200
 
-    # Check incoming message text
+    # Check for trigger word
     message_text = data['text'].lower()
     if 'clean memes' in message_text:
         send_message("We're the best!")
 
     return '', 200
-
 
 def send_message(text):
     """Send a message via GroupMe Bot API"""
@@ -36,16 +34,15 @@ def send_message(text):
         "bot_id": BOT_ID,
         "text": text
     }
-    # ✅ No headers needed here, bot posts only need bot_id
     try:
         response = requests.post(url, json=payload)
         response.raise_for_status()
     except requests.exceptions.RequestException as e:
         print(f"Error sending message: {e}")
 
-
-def get_groups():
-    """Example of an authenticated API call using the access token"""
+# Example of using access token for API calls if needed
+@app.route('/groups', methods=['GET'])
+def groups():
     url = "https://api.groupme.com/v3/groups"
     headers = {"X-Access-Token": ACCESS_TOKEN}
     try:
@@ -53,9 +50,7 @@ def get_groups():
         response.raise_for_status()
         return response.json()
     except requests.exceptions.RequestException as e:
-        print(f"Error fetching groups: {e}")
-        return None
-
+        return {"error": str(e)}, 500
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)))
