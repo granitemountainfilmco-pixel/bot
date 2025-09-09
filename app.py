@@ -30,6 +30,8 @@ def webhook():
         send_message("nuh uh")
     elif 'has left the group' in message_text:
         send_message("GAY")
+    elif 'wsg chat just got back from band practice' in message_text:
+        send_message("band kid? crazy.")
 
     return '', 200
 
