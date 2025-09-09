@@ -28,6 +28,8 @@ def webhook():
         send_message("https://uploads.dailydot.com/2024/12/cat-laughing-4.jpg?auto=compress&fm=pjpg")
     elif 'clanker' in message_text:
         send_message("nuh uh")
+    elif 'kidney' in message_text:
+        send_message("his bot is sad")
 
     return '', 200
 
