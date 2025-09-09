@@ -32,8 +32,9 @@ def webhook():
         send_message("GAY")
     elif 'wsg chat just got back from band practice' in message_text:
         send_message("band kid? crazy.")
-
-    return '', 200
+    elif 'has joined the group' in message_text:
+        send_message("Welcome to clean memes. if you swear you get kicked, if you don't, you get a cookie. read the rules and psa topics for up to date info. Enjoy your time here!")
+        return '', 200
 
 def send_message(text):
     """Send a message via GroupMe Bot API"""
