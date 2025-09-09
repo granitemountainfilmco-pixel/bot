@@ -26,6 +26,8 @@ def webhook():
         send_message("We're the best!")
     elif 'wsg' in message_text:
         send_message("God is good")
+    elif 'bye' in message_text:
+	send_message("https://uploads.dailydot.com/2024/12/cat-laughing-4.jpg?auto=compress&fm=pjpg")
 
     return '', 200
 
