@@ -18,7 +18,7 @@ def webhook():
 
     # Check for trigger words
     message_text = data['text'].lower()
-    if 'Welcome to Clean Memes! Read the rules in the rules topic and most importantly, have fun! We yap a lot, so you might want to mute the chat. Also, if you stay, I’ll give you a cookie. 🍪 ' in message_text:
+    if 'Welcome to Clean Memes! Read the rules in the rules topic and most importantly, have fun! We yap a lot, so you might want to mute the chat. Also, if you stay, I’ll give you a cookie. 🍪' in message_text:
         send_message("You stole that from left kidney")
     elif 'clean memes' in message_text:
         send_message("We're the best!")
