@@ -13,32 +13,23 @@ def webhook():
     data = request.get_json()
 
     # Ignore empty payloads
-    if not data:
+    if not data or 'text' not in data:
         return '', 200
 
-    # Handle system messages (e.g., user leaving)
-    if data.get("system") and "event" in data:
-    event = data.get("event", {})
-    event_type = event.get("type")
-    user_name = event.get("name", "Someone")
-    send_message(f"{user_name} is gay for leaving!")
-    return '', 200
-
-    # Avoid infinite loops for bot messages
+    # Avoid infinite loops
     if data.get("sender_type") == "bot":
         return '', 200
 
-    # Check for trigger words in user messages
-    if 'text' in data:
-        message_text = data['text'].lower()
-        if 'clean memes' in message_text:
-            send_message("We're the best!")
-        elif 'wsg' in message_text:
-            send_message("God is good")
-        elif 'bye' in message_text:
-            send_message("https://uploads.dailydot.com/2024/12/cat-laughing-4.jpg?auto=compress&fm=pjpg")
-        elif 'clanker' in message_text:
-            send_message("nuh uh")
+    # Check for trigger words
+    message_text = data['text'].lower()
+    if 'clean memes' in message_text:
+        send_message("We're the best!")
+    elif 'wsg' in message_text:
+        send_message("God is good")
+    elif 'bye' in message_text:
+        send_message("https://uploads.dailydot.com/2024/12/cat-laughing-4.jpg?auto=compress&fm=pjpg")
+    elif 'clanker' in message_text:
+        send_message("nuh uh")
 
     return '', 200
 
