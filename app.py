@@ -25,7 +25,7 @@ def webhook():
     elif 'wsg' in message_text:
         send_message("God is good")
     elif 'bye' in message_text:
-        send_message("https://uploads.dailydot.com/2024/12/cat-laughing-4.jpg?auto=compress&fm=pjpg")
+        send_message("cya")
     elif 'clanker' in message_text:
         send_message("nuh uh")
     elif 'has left the group' in message_text:
