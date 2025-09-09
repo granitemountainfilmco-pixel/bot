@@ -18,12 +18,11 @@ def webhook():
 
     # Handle system messages (e.g., user leaving)
     if data.get("system") and "event" in data:
-        event = data.get("event", {})
-        event_type = event.get("type")
-        if event_type in ["group.member_remove", "group.member_leave"]:
-            user_name = event.get("name", "Someone")
-            send_message(f"{user_name} is gay for leaving!")
-            return '', 200
+    event = data.get("event", {})
+    event_type = event.get("type")
+    user_name = event.get("name", "Someone")
+    send_message(f"{user_name} is gay for leaving!")
+    return '', 200
 
     # Avoid infinite loops for bot messages
     if data.get("sender_type") == "bot":
