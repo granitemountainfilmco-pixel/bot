@@ -30,6 +30,8 @@ def webhook():
         send_message("nuh uh")
     elif 'kidney' in message_text:
         send_message("his bot is sad")
+    elif 'has left the group' in message_text:
+        send_message("GAY")
 
     return '', 200
 
