@@ -1,24 +1,14 @@
 from flask import Flask, request
 import requests
 import os
-from flask_limiter import Limiter
-from flask_limiter.util import get_remote_address
 
 app = Flask(__name__)
-
-# Configure rate limiting
-limiter = Limiter(
-    app,
-    key_func=get_remote_address,
-    default_limits=["12 per minute"]  # 12 requests per minute = 1 request every 5 seconds
-)
 
 # GroupMe API settings (from Render environment variables)
 ACCESS_TOKEN = os.getenv("ACCESS_TOKEN")
 BOT_ID = os.getenv("BOT_ID")
 
 @app.route('/webhook', methods=['POST'])
-@limiter.limit("12 per minute")  # Explicitly apply rate limit to webhook endpoint
 def webhook():
     data = request.get_json()
 
