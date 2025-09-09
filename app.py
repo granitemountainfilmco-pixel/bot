@@ -5,9 +5,9 @@ import os
 
 app = Flask(__name__)
 
-# Load GroupMe API settings from environment variables
-ACCESS_TOKEN = os.getenv("gLQYFRJ45TWBhuDlAGFlU3t1132qDJGrA3vUQ6rx")
-BOT_ID = os.getenv("b735f26b7a373dfbd15c49f29d")
+# GroupMe API settings (hardcoded as requested)
+ACCESS_TOKEN = "gLQYFRJ45TWBhuDlAGFlU3t1132qDJGrA3vUQ6rx"
+BOT_ID = "b735f26b7a373dfbd15c49f29d"
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
