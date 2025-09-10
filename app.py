@@ -16,7 +16,7 @@ BOT_ID = os.getenv("BOT_ID")
 
 # Global rate limit tracker
 last_sent_time = 0
-cooldown_seconds = 5  # global cooldown
+cooldown_seconds = 10  # global cooldown
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
