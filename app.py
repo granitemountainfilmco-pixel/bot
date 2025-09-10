@@ -8,18 +8,9 @@ app = Flask(__name__)
 ACCESS_TOKEN = os.getenv("ACCESS_TOKEN")
 BOT_ID = os.getenv("BOT_ID")
 
-# Rate limiting variables
-last_message_time = 0
-RATE_LIMIT_SECONDS = 5
-
 @app.route('/webhook', methods=['POST'])
 def webhook():
-    global last_message_time
     data = request.get_json()
-
-    current_time = time.time()
-    if current_time - last_message_time < RATE_LIMIT_SECONDS:
-        return '',200
 
     last_message_time = current_time
 
