@@ -18,7 +18,7 @@ def webhook():
     data = request.get_json()
 
     current_time = time.time()
-    if current_time - last_message_time < RATE_LIMIT SECONDS:
+    if current_time - last_message_time < RATE_LIMIT_SECONDS:
         return '',200
 
     last_message_time = current_time
