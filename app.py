@@ -34,8 +34,8 @@ def webhook():
         send_message("We're the best!")
     elif 'wsg' in message_text:
         send_message("God is good")
-    elif 'has left the group' in message_text:
-        send_message("GAY")
+    elif 'has left the group' in message_text and data.get("sender_type") == "system":
+    send_message("GAY")
     elif 'wsg chat just got back from band practice' in message_text:
         send_message("band kid? crazy.")
     elif 'has joined the group' in message_text:
