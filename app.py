@@ -28,8 +28,10 @@ def webhook():
         return '', 200
 
     message_text = data['text'].lower()
+    attachments = data.get("attachments", [])
     logger.info(f"Processing message: {message_text}")
 
+    # Triggers
     if 'clean memes' in message_text:
         send_message("We're the best!")
     elif 'wsg' in message_text:
@@ -41,7 +43,9 @@ def webhook():
     elif 'has joined the group' in message_text:
         send_message("Welcome to Clean Memes, check the rules and announcement topics before chatting!")
     elif 'https:' in message_text:
-        send_message("Delete this, links are not allowed, admins have been notified")
+        # Only flag if NOT an uploaded video
+        if not any(att.get("type") == "video" for att in attachments):
+            send_message("Delete this, links are not allowed, admins have been notified")
     
     return '', 200
 
