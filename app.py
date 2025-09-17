@@ -38,8 +38,8 @@ def webhook():
         send_message("God is good")
     elif 'has left the group' in message_text and data.get("sender_type") == "system":
         send_message("GAY")
-    elif 'wsg chat just got back from band practice' in message_text:
-        send_message("band kid? crazy.")
+    elif 'cooper is my pookie' in message_text:
+        send_message("me too bro")
     elif 'has joined the group' in message_text and data.get("sender_type") == "system":
         send_message("Welcome to Clean Memes, check the rules and announcement topics before chatting!")
     elif 'has been removed' in message_text and data.get("sender_type") == "system":
