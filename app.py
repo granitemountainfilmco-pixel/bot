@@ -42,7 +42,7 @@ def webhook():
         send_message("me too bro")
     elif 'has joined the group' in message_text and data.get("sender_type") == "system":
         send_message("Welcome to Clean Memes, check the rules and announcement topics before chatting!")
-    elif 'has been removed' in message_text and data.get("sender_type") == "system":
+    elif 'removed' in message_text and data.get("sender_type") == "system":
         send_message("this could be you if you break the rules, watch it. 👀")
     elif 'https:' in message_text:
         # Only flag if NOT an uploaded video
