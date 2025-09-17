@@ -40,7 +40,7 @@ def webhook():
         send_message("GAY")
     elif 'wsg chat just got back from band practice' in message_text:
         send_message("band kid? crazy.")
-    elif 'has joined the group' in message_text:
+    elif 'has joined the group' in message_text and data.get("sender_type") == "system":
         send_message("Welcome to Clean Memes, check the rules and announcement topics before chatting!")
     elif 'https:' in message_text:
         # Only flag if NOT an uploaded video
