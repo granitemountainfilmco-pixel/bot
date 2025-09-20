@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 # Config
 BOT_ID = os.getenv("BOT_ID")
-XAI_API_KEY = os.getenv("XAI_API_KEY")
+COHERE_API_KEY = os.getenv("COHERE_API_KEY")
 
 # Cooldowns
 last_sent_time = 0
@@ -20,46 +20,50 @@ cooldown_seconds = 10
 last_ai_time = 0
 ai_cooldown_seconds = 30
 
-def ask_grok(prompt):
-    """Ask Grok (updated with current model)"""
-    if not XAI_API_KEY:
+def ask_cohere(prompt):
+    """Ask Cohere AI (free & simple)"""
+    if not COHERE_API_KEY:
         return "❌ API key missing!"
         
-    url = "https://api.x.ai/v1/chat/completions"
+    url = "https://api.cohere.ai/v1/generate"
     headers = {
-        "Authorization": f"Bearer {XAI_API_KEY}",
+        "Authorization": f"Bearer {COHERE_API_KEY}",
         "Content-Type": "application/json"
     }
     data = {
-        "model": "grok-3",  # Current free model
-        "messages": [{"role": "user", "content": f"Clean Memes group chat: {prompt}"}],
+        "model": "command-r",  # Free tier model - witty & concise
+        "prompt": f"You are ClankerAI, a sarcastic yet helpful bot in the Clean Memes GroupMe chat. Keep it short (1-2 sentences), meme-y, and end with an emoji if it fits. User: {prompt}\nClankerAI:",
         "max_tokens": 100,
-        "temperature": 0.8
+        "temperature": 0.8,
+        "stop_sequences": ["User:", "\n\n"]  # Clean cutoff
     }
     
     try:
-        logger.info(f"Sending to Grok: {prompt[:50]}...")
+        logger.info(f"Sending to Cohere: {prompt[:50]}...")
         response = requests.post(url, headers=headers, json=data, timeout=15)
         response.raise_for_status()
         
-        reply = response.json()["choices"][0]["message"]["content"].strip()
-        logger.info(f"Grok replied: {reply[:50]}...")
+        reply = response.json()["generations"][0]["text"].strip()
+        # Clean up (remove any extra prefixes)
+        if reply.startswith("ClankerAI:"):
+            reply = reply[10:].strip()
+        logger.info(f"Cohere replied: {reply[:50]}...")
         return reply
         
     except requests.exceptions.Timeout:
-        logger.error("Grok API timeout")
-        return "⏳ Grok's thinking hard—try again in a sec!"
+        logger.error("Cohere API timeout")
+        return "⏳ Thinking... try again!"
     except requests.exceptions.HTTPError as e:
         if e.response.status_code == 401:
-            return "🔑 API key issue—check your xAI key!"
+            return "🔑 API key issue—check your Cohere key!"
         elif e.response.status_code == 429:
-            return "⏰ Free tier limit hit—try again tomorrow!"
+            return "⏰ Free limit hit—wait a bit!"
         else:
-            logger.error(f"Grok HTTP error: {e}")
-            return "🤖 Grok's servers are napping—try again!"
+            logger.error(f"Cohere HTTP error: {e}")
+            return "🤖 Servers are busy—ping again!"
     except Exception as e:
-        logger.error(f"Grok error: {e}")
-        return "⚠️ Glitch in the matrix—ping me again!"
+        logger.error(f"Cohere error: {e}")
+        return "⚠️ Quick glitch—try me again!"
 
 def send_message(text):
     """Send to GroupMe with cooldown"""
@@ -125,8 +129,8 @@ def webhook():
             
             logger.info(f"ClankerAI triggered by {sender}: {prompt[:50]}...")
             
-            # Get Grok response
-            response = ask_grok(prompt)
+            # Get AI response
+            response = ask_cohere(prompt)
             
             # Send with cooldown
             send_ai_message(response)
@@ -160,38 +164,38 @@ def webhook():
 def health():
     """Health check endpoint"""
     try:
-        # Test Grok API quickly
-        test_response = ask_grok("say hi")
-        grok_status = "OK" if "hi" in test_response.lower() else f"ERROR: {test_response}"
+        # Test Cohere API quickly
+        test_response = ask_cohere("say hi")
+        cohere_status = "OK" if len(test_response) > 5 else f"ERROR: {test_response}"
     except:
-        grok_status = "TEST FAILED"
+        cohere_status = "TEST FAILED"
     
     return {
-        "status": "healthy" if BOT_ID and XAI_API_KEY else "missing config",
+        "status": "healthy" if BOT_ID and COHERE_API_KEY else "missing config",
         "bot_id": BOT_ID[:8] + "..." if BOT_ID else "MISSING",
-        "xai_key": "SET" if XAI_API_KEY else "MISSING",
-        "grok_status": grok_status,
+        "cohere_key": "SET" if COHERE_API_KEY else "MISSING",
+        "cohere_status": cohere_status,
         "last_ai": time.ctime(last_ai_time) if last_ai_time else "Never",
-        "daily_limit": "10k tokens (~100 messages)"
+        "free_limit": "1k calls/month (~30-50 msgs/day)"
     }
 
 @app.route('/test', methods=['GET'])
 def test():
     """Simple test endpoint"""
-    test_response = ask_grok("tell me a short joke")
+    test_response = ask_cohere("tell me a short joke")
     return {"test_joke": test_response}
 
 if __name__ == "__main__":
-    logger.info("🚀 Starting ClankerAI Bot (Grok-powered)")
+    logger.info("🚀 Starting ClankerAI Bot (Cohere-powered)")
     logger.info(f"Bot ID: {'SET' if BOT_ID else 'MISSING'}")
-    logger.info(f"xAI Key: {'SET' if XAI_API_KEY else 'MISSING'}")
+    logger.info(f"Cohere Key: {'SET' if COHERE_API_KEY else 'MISSING'}")
     
     # Quick startup test
-    if XAI_API_KEY:
-        test = ask_grok("startup test")
+    if COHERE_API_KEY:
+        test = ask_cohere("startup test - say hi")
         logger.info(f"Startup test: {test}")
     else:
-        logger.error("No xAI API key - ClankerAI won't work!")
+        logger.error("No Cohere API key - ClankerAI won't work!")
     
     port = int(os.getenv("PORT", 5000))
     logger.info(f"🚀 Bot running on port {port}")
