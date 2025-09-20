@@ -21,7 +21,7 @@ last_ai_time = 0
 ai_cooldown_seconds = 30
 
 def ask_groq(prompt):
-    """Ask Groq (fixed for 400 errors)"""
+    """Ask Groq (fixed model deprecation)"""
     if not GROQ_API_KEY:
         return "❌ API key missing!"
         
@@ -31,7 +31,7 @@ def ask_groq(prompt):
         "Content-Type": "application/json"
     }
     data = {
-        "model": "llama3-8b-8192",  # Confirmed valid model ID
+        "model": "llama-3.1-8b-instant",  # Fixed: Current supported Llama 3 model
         "messages": [
             {"role": "system", "content": "You are ClankerAI, a sarcastic yet helpful bot in the Clean Memes GroupMe chat. Keep it short (1-2 sentences), meme-y, and end with an emoji if it fits. Be witty and conversational."},
             {"role": "user", "content": prompt}
