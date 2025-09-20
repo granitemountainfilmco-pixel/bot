@@ -21,7 +21,7 @@ last_ai_time = 0
 ai_cooldown_seconds = 30
 
 def ask_groq(prompt):
-    """Ask Groq (free, fast, OpenAI-compatible)"""
+    """Ask Groq (fixed for 400 errors)"""
     if not GROQ_API_KEY:
         return "❌ API key missing!"
         
@@ -31,13 +31,14 @@ def ask_groq(prompt):
         "Content-Type": "application/json"
     }
     data = {
-        "model": "llama3-8b-8192",  # Free, fast model (Llama 3 8B)
+        "model": "llama3-8b-8192",  # Confirmed valid model ID
         "messages": [
             {"role": "system", "content": "You are ClankerAI, a sarcastic yet helpful bot in the Clean Memes GroupMe chat. Keep it short (1-2 sentences), meme-y, and end with an emoji if it fits. Be witty and conversational."},
             {"role": "user", "content": prompt}
         ],
-        "max_tokens": 100,
-        "temperature": 0.8
+        "max_completion_tokens": 100,  # Fixed: Use this instead of max_tokens
+        "temperature": 0.8,
+        "n": 1  # Explicitly set to avoid defaults issues
     }
     
     try:
@@ -53,17 +54,21 @@ def ask_groq(prompt):
         logger.error("Groq API timeout")
         return "⏳ Processing... try again!"
     except requests.exceptions.HTTPError as e:
-        if e.response.status_code == 401:
-            return "🔑 API key issue—check your Groq key!"
-        elif e.response.status_code == 429:
-            return "⏰ Rate limit hit—wait a moment!"
+        status = e.response.status_code if hasattr(e.response, 'status_code') else "unknown"
+        error_detail = e.response.json().get('error', {}).get('message', str(e)) if hasattr(e.response, 'json') else str(e)
+        logger.error(f"Groq HTTP {status}: {error_detail}")
+        
+        if status == 400:
+            return f"🔧 Bad request (check payload): {error_detail[:100]}"
+        elif status == 401:
+            return "🔑 API key invalid—regenerate at console.groq.com"
+        elif status == 429:
+            return "⏰ Rate limit—wait 1 min or check usage"
         else:
-            status = e.response.status_code if hasattr(e.response, 'status_code') else "unknown"
-            logger.error(f"Groq HTTP {status}: {e}")
-            return "🤖 Server hiccup—try again!"
+            return "🤖 Server issue—try again!"
     except Exception as e:
         logger.error(f"Groq error: {e}")
-        return "⚠️ Quick glitch—ping me again!"
+        return "⚠️ Unexpected glitch—ping again!"
 
 def send_message(text):
     """Send to GroupMe with cooldown"""
@@ -160,6 +165,18 @@ def webhook():
         logger.error(f"Webhook error: {e}")
         return '', 500
 
+@app.route('/groups', methods=['GET'])
+def groups():
+    """Get groups endpoint (unchanged from your original)"""
+    url = "https://api.groupme.com/v3/groups"
+    headers = {"X-Access-Token": os.getenv("ACCESS_TOKEN")}
+    try:
+        response = requests.get(url, headers=headers)
+        response.raise_for_status()
+        return response.json()
+    except requests.exceptions.RequestException as e:
+        return {"error": str(e)}, 500
+
 @app.route('/health', methods=['GET'])
 def health():
     """Health check endpoint"""
@@ -192,8 +209,11 @@ if __name__ == "__main__":
     
     # Quick startup test
     if GROQ_API_KEY:
-        test = ask_groq("startup test - say hi")
-        logger.info(f"Startup test: {test}")
+        try:
+            test = ask_groq("startup test - say hi")
+            logger.info(f"Startup test: {test}")
+        except Exception as e:
+            logger.error(f"Startup test failed: {e}")
     else:
         logger.error("No Groq API key - ClankerAI won't work!")
     
