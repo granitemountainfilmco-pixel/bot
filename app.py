@@ -13,12 +13,13 @@ logger = logging.getLogger(__name__)
 # Config
 BOT_ID = os.getenv("BOT_ID")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+BOT_NAME = os.getenv("BOT_NAME", "ClankerAI")  # Add your bot's display name
 
 # Cooldowns
 last_sent_time = 0
 cooldown_seconds = 10
 last_ai_time = 0
-ai_cooldown_seconds = 5  # Changed from 0 to prevent spam
+ai_cooldown_seconds = 5
 
 def ask_groq(prompt):
     """Ask Groq (fixed model deprecation)"""
@@ -33,7 +34,7 @@ def ask_groq(prompt):
     data = {
         "model": "llama-3.1-8b-instant",
         "messages": [
-            {"role": "system", "content": "You are ClankerAI, a sarcastic yet helpful bot in the Clean Memes GroupMe chat. Keep it short (1-2 sentences), meme-y, and end with an emoji if it fits. Be witty and conversational."},
+            {"role": "system", "content": "You are ClankerAI, a sarcastic yet helpful bot in the Clean Memes GroupMe chat. Keep it short (1-2 sentences), meme-y, and end with an emoji if it fits. Be witty and conversational. Do NOT start your response with 'ClankerAI:' or 'AI:' - just respond naturally."},
             {"role": "user", "content": prompt}
         ],
         "max_completion_tokens": 100,
@@ -42,7 +43,7 @@ def ask_groq(prompt):
     }
     
     try:
-        logger.info(f"Sending to Groq: {prompt[:50]}...")
+        logger.info(f"Sending to Grok: {prompt[:50]}...")
         response = requests.post(url, headers=headers, json=data, timeout=10)
         response.raise_for_status()
         
@@ -91,7 +92,7 @@ def send_message(text):
         return False
 
 def send_ai_message(text):
-    """Send AI response with cooldown"""
+    """Send AI response with cooldown - NO PREFIX"""
     global last_ai_time
     now = time.time()
     if now - last_ai_time < ai_cooldown_seconds:
@@ -99,7 +100,8 @@ def send_ai_message(text):
         logger.info(f"AI cooldown: {remaining}s remaining")
         return False
     
-    full_message = f"🤖 ClankerAI: {text}"
+    # Just send the response without "ClankerAI:" prefix
+    full_message = text  # No prefix!
     success = send_message(full_message)
     if success:
         last_ai_time = now
@@ -107,8 +109,13 @@ def send_ai_message(text):
     return success
 
 def extract_prompt(full_text, sender):
-    """Extract meaningful prompt from message"""
+    """Extract meaningful prompt from message - ignore bot's own messages"""
     text_lower = full_text.lower()
+    
+    # Ignore messages from the bot itself
+    if sender.lower() == BOT_NAME.lower() or "🤖 clankerai" in text_lower:
+        logger.info(f"Ignoring own message from {sender}")
+        return None
     
     # Find the position of "clankerai"
     if 'clankerai' in text_lower:
@@ -152,14 +159,14 @@ def webhook():
             full_text = data['text']
             prompt = extract_prompt(full_text, sender)
             
-            # Only respond if we got a meaningful prompt
+            # Only respond if we got a meaningful prompt AND it's not our own message
             if prompt:
                 logger.info(f"ClankerAI triggered by {sender}: {prompt[:50]}...")
                 
                 # Get AI response
                 response = ask_groq(prompt)
                 
-                # Send with cooldown
+                # Send WITHOUT prefix to avoid self-triggering
                 send_ai_message(response)
                 return '', 200
             else:
@@ -216,6 +223,7 @@ def health():
     return {
         "status": "healthy" if BOT_ID and GROQ_API_KEY else "missing config",
         "bot_id": BOT_ID[:8] + "..." if BOT_ID else "MISSING",
+        "bot_name": BOT_NAME,
         "groq_key": "SET" if GROQ_API_KEY else "MISSING",
         "groq_status": groq_status,
         "ai_cooldown": f"{ai_cooldown_seconds}s",
@@ -232,6 +240,7 @@ def test():
 if __name__ == "__main__":
     logger.info("🚀 Starting ClankerAI Bot (Groq-powered)")
     logger.info(f"Bot ID: {'SET' if BOT_ID else 'MISSING'}")
+    logger.info(f"Bot Name: {BOT_NAME}")
     logger.info(f"Groq Key: {'SET' if GROQ_API_KEY else 'MISSING'}")
     logger.info(f"AI Cooldown: {ai_cooldown_seconds}s")
     
