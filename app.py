@@ -19,7 +19,7 @@ BOT_NAME = os.getenv("BOT_NAME", "ClankerAI")  # Add your bot's display name
 last_sent_time = 0
 cooldown_seconds = 10
 last_ai_time = 0
-ai_cooldown_seconds = 120
+ai_cooldown_seconds = 60
 
 def ask_groq(prompt):
     """Ask Groq (fixed model deprecation)"""
