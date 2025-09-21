@@ -18,7 +18,7 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 last_sent_time = 0
 cooldown_seconds = 10
 last_ai_time = 0
-ai_cooldown_seconds = 30
+ai_cooldown_seconds = 10
 
 def ask_groq(prompt):
     """Ask Groq (fixed model deprecation)"""
