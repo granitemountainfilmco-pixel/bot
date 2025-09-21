@@ -18,7 +18,7 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 last_sent_time = 0
 cooldown_seconds = 10
 last_ai_time = 0
-ai_cooldown_seconds = 0
+ai_cooldown_seconds = 5  # Changed from 0 to prevent spam
 
 def ask_groq(prompt):
     """Ask Groq (fixed model deprecation)"""
@@ -31,14 +31,14 @@ def ask_groq(prompt):
         "Content-Type": "application/json"
     }
     data = {
-        "model": "llama-3.1-8b-instant",  # Fixed: Current supported Llama 3 model
+        "model": "llama-3.1-8b-instant",
         "messages": [
             {"role": "system", "content": "You are ClankerAI, a sarcastic yet helpful bot in the Clean Memes GroupMe chat. Keep it short (1-2 sentences), meme-y, and end with an emoji if it fits. Be witty and conversational."},
             {"role": "user", "content": prompt}
         ],
-        "max_completion_tokens": 100,  # Fixed: Use this instead of max_tokens
+        "max_completion_tokens": 100,
         "temperature": 0.8,
-        "n": 1  # Explicitly set to avoid defaults issues
+        "n": 1
     }
     
     try:
@@ -106,6 +106,34 @@ def send_ai_message(text):
         logger.info("AI message sent successfully")
     return success
 
+def extract_prompt(full_text, sender):
+    """Extract meaningful prompt from message"""
+    text_lower = full_text.lower()
+    
+    # Find the position of "clankerai"
+    if 'clankerai' in text_lower:
+        clanker_pos = text_lower.find('clankerai')
+        # Extract everything after "clankerai"
+        prompt = full_text[clanker_pos + len('clankerai'):].strip()
+        
+        # If nothing meaningful after clankerai, return None (don't respond)
+        if not prompt or prompt in ['!', '?', '.', '', ' ', '\n']:
+            logger.info(f"Empty prompt from {sender} - ignoring")
+            return None
+        
+        # Clean up the prompt (remove leading punctuation/spaces)
+        prompt = prompt.lstrip(' .,!?').strip()
+        
+        # If still empty after cleanup, ignore
+        if len(prompt) < 2:
+            logger.info(f"Prompt too short from {sender} - ignoring")
+            return None
+        
+        logger.info(f"Extracted prompt: '{prompt}'")
+        return prompt
+    
+    return None
+
 @app.route('/webhook', methods=['POST'])
 def webhook():
     try:
@@ -119,27 +147,25 @@ def webhook():
         sender = data.get('name', 'Someone')
         attachments = data.get("attachments", [])
         
-        # ClankerAI trigger
+        # ClankerAI trigger - FIXED LOGIC
         if 'clankerai' in text:
             full_text = data['text']
-            # Extract prompt after "clankerai"
-            if 'clankerai' in full_text:
-                prompt = full_text.split('clankerai', 1)[1].strip()
+            prompt = extract_prompt(full_text, sender)
+            
+            # Only respond if we got a meaningful prompt
+            if prompt:
+                logger.info(f"ClankerAI triggered by {sender}: {prompt[:50]}...")
+                
+                # Get AI response
+                response = ask_groq(prompt)
+                
+                # Send with cooldown
+                send_ai_message(response)
+                return '', 200
             else:
-                prompt = "say something funny"
-            
-            # Clean up prompt
-            if not prompt or prompt in ['!', '?', '', ' ']:
-                prompt = f"{sender} just pinged me in the Clean Memes group!"
-            
-            logger.info(f"ClankerAI triggered by {sender}: {prompt[:50]}...")
-            
-            # Get AI response
-            response = ask_groq(prompt)
-            
-            # Send with cooldown
-            send_ai_message(response)
-            return '', 200
+                # Empty prompt - don't respond, just log
+                logger.info(f"Ignoring empty ClankerAI ping from {sender}")
+                return '', 200
         
         # Your existing triggers (unchanged)
         if 'clean memes' in text:
@@ -192,6 +218,7 @@ def health():
         "bot_id": BOT_ID[:8] + "..." if BOT_ID else "MISSING",
         "groq_key": "SET" if GROQ_API_KEY else "MISSING",
         "groq_status": groq_status,
+        "ai_cooldown": f"{ai_cooldown_seconds}s",
         "last_ai": time.ctime(last_ai_time) if last_ai_time else "Never",
         "free_limit": "1M tokens/month (~20k short responses)"
     }
@@ -206,6 +233,7 @@ if __name__ == "__main__":
     logger.info("🚀 Starting ClankerAI Bot (Groq-powered)")
     logger.info(f"Bot ID: {'SET' if BOT_ID else 'MISSING'}")
     logger.info(f"Groq Key: {'SET' if GROQ_API_KEY else 'MISSING'}")
+    logger.info(f"AI Cooldown: {ai_cooldown_seconds}s")
     
     # Quick startup test
     if GROQ_API_KEY:
