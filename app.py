@@ -109,7 +109,7 @@ def check_for_violations(text, user_id, username):
             else:
                 # Warning message
                 remaining = 3 - current_count
-                send_message(f"⚠️ {username} - Warning {current_count}/3 for inappropriate language. {remaining} more and you're banned!")
+                send_message(f"⚠️ {username} - Warning {current_count}/10 for inappropriate language. {remaining} more and you're banned!")
             
             break  # Only count one swear per message
     
