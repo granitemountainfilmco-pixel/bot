@@ -15,10 +15,16 @@ BOT_ID = os.getenv("BOT_ID")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 BOT_NAME = os.getenv("BOT_NAME", "ClankerAI")
 
-# NEW: Moderation config
+# Ban system config
 GROUP_ID = os.getenv("GROUP_ID")
-DELETER_URL = os.getenv("DELETER_URL")
-SWEAR_WORDS = [
+BAN_SERVICE_URL = os.getenv("BAN_SERVICE_URL")
+
+# Swear word categories
+INSTANT_BAN_WORDS = [
+    'nigger', 'nigga', 'n1gger', 'n1gga'  # n-word variations
+]
+
+REGULAR_SWEAR_WORDS = [
     'fuck', 'fucking', 'fucked', 'fucker',
     'shit', 'shitting', 'shitty',
     'bitch', 'bitches',
@@ -34,46 +40,80 @@ SWEAR_WORDS = [
     'loraxmybabe'
 ]
 
-# FIXED: Swear deletion function
-def forward_to_deleter(message_id, swear_word):
-    """Forward swear to deletion service."""
-    if not DELETER_URL:
-        logger.warning("No DELETER_URL configured - can't delete swears")
+# Track user swear counts (in memory)
+user_swear_counts = {}
+
+def call_ban_service(user_id, username, reason):
+    """Call the ban service to remove a user"""
+    if not BAN_SERVICE_URL:
+        logger.warning("No BAN_SERVICE_URL configured - can't ban users")
         return False
     
     payload = {
-        'message_id': message_id,
-        'reason': f'Swear: {swear_word}'
+        'user_id': user_id,
+        'username': username,
+        'reason': reason
     }
     
     try:
-        response = requests.post(f"{DELETER_URL}/delete", json=payload, timeout=5)
+        response = requests.post(f"{BAN_SERVICE_URL}/ban", json=payload, timeout=5)
         if response.status_code == 200:
-            logger.info(f"✅ Deleted {message_id} via deletion service: {swear_word}")
+            logger.info(f"✅ Banned {username} ({user_id}): {reason}")
             return True
         else:
-            logger.error(f"❌ Delete failed {response.status_code}: {response.text}")
+            logger.error(f"❌ Ban failed {response.status_code}: {response.text}")
             return False
     except Exception as e:
-        logger.error(f"❌ Forward error: {e}")
+        logger.error(f"❌ Ban service error: {e}")
         return False
 
-def check_for_swears(text, message_id):
-    """Check if message contains swear words."""
-    if not GROUP_ID:
-        logger.warning("No GROUP_ID configured - skipping swear check")
-        return False
-    
+def check_for_violations(text, user_id, username):
+    """Check for instant ban words or accumulating swears"""
     text_lower = text.lower()
     text_words = text_lower.split()
     
+    # Check for instant ban words (n-word)
     for word in text_words:
-        clean_word = word.strip('.,!?"\'').lower()
-        if clean_word in SWEAR_WORDS:
-            logger.info(f"Swear detected: '{clean_word}' in {message_id}")
-            return forward_to_deleter(message_id, clean_word)
+        clean_word = word.strip('.,!?"\'()[]{}').lower()
+        if clean_word in INSTANT_BAN_WORDS:
+            logger.info(f"🚨 INSTANT BAN: '{clean_word}' from {username}")
+            success = call_ban_service(user_id, username, f"Instant ban: {clean_word}")
+            if success:
+                send_message(f"🔨 {username} has been permanently banned for using prohibited language.")
+            return True
     
-    return False
+    # Check for regular swear words
+    swear_found = False
+    for word in text_words:
+        clean_word = word.strip('.,!?"\'()[]{}').lower()
+        if clean_word in REGULAR_SWEAR_WORDS:
+            swear_found = True
+            logger.info(f"Swear detected: '{clean_word}' from {username}")
+            
+            # Increment user's swear count
+            if user_id not in user_swear_counts:
+                user_swear_counts[user_id] = 0
+            user_swear_counts[user_id] += 1
+            
+            current_count = user_swear_counts[user_id]
+            logger.info(f"{username} swear count: {current_count}/3")
+            
+            if current_count >= 3:
+                # Ban after 3 swears
+                success = call_ban_service(user_id, username, f"3 strikes - swear words")
+                if success:
+                    send_message(f"🔨 {username} has been banned for repeated inappropriate language (3 strikes).")
+                    # Reset count after ban
+                    user_swear_counts[user_id] = 0
+                return True
+            else:
+                # Warning message
+                remaining = 3 - current_count
+                send_message(f"⚠️ {username} - Warning {current_count}/3 for inappropriate language. {remaining} more and you're banned!")
+            
+            break  # Only count one swear per message
+    
+    return swear_found
 
 # Cooldowns
 last_sent_time = 0
@@ -208,19 +248,29 @@ def webhook():
         if not data or 'text' not in data:
             return '', 200
         
-        # CHECK FOR SWEARS FIRST (before any bot logic)
-        message_id = data.get('id')
+        # Only process user messages (not system messages)
+        if data.get('sender_type') != 'user':
+            return '', 200
+        
+        # Get message details
         text = data['text']
-        if message_id and text:
-            swear_deleted = check_for_swears(text, message_id)
-            if swear_deleted:
-                # Message was deleted - skip all bot logic
-                logger.info(f"Message {message_id} deleted due to swear - skipping bot responses")
-                return '', 200
+        sender = data.get('name', 'Someone')
+        user_id = data.get('user_id')
+        
+        # Don't moderate the bot's own messages
+        if sender.lower() == BOT_NAME.lower():
+            return '', 200
+        
+        # CHECK FOR VIOLATIONS FIRST (before any bot logic)
+        if user_id and text:
+            violation_found = check_for_violations(text, user_id, sender)
+            if violation_found:
+                # User was banned or warned - continue with normal bot logic
+                # (we don't skip other responses for warnings)
+                pass
         
         # REST OF YOUR EXISTING BOT LOGIC (unchanged)
         text_lower = text.lower()
-        sender = data.get('name', 'Someone')
         attachments = data.get("attachments", [])
         
         # ClankerAI trigger
@@ -261,6 +311,28 @@ def webhook():
         logger.error(f"Webhook error: {e}")
         return '', 500
 
+@app.route('/reset-count', methods=['POST'])
+def reset_count():
+    """Reset a user's swear count (for admin use)"""
+    try:
+        data = request.get_json()
+        user_id = data.get('user_id')
+        
+        if not user_id:
+            return {"error": "user_id required"}, 400
+        
+        if user_id in user_swear_counts:
+            old_count = user_swear_counts[user_id]
+            user_swear_counts[user_id] = 0
+            logger.info(f"Reset swear count for user {user_id} (was {old_count})")
+            return {"success": True, "old_count": old_count, "new_count": 0}
+        else:
+            return {"success": True, "message": "User had no recorded swears"}
+        
+    except Exception as e:
+        logger.error(f"Reset count error: {e}")
+        return {"error": str(e)}, 500
+
 @app.route('/groups', methods=['GET'])
 def groups():
     """Get groups endpoint"""
@@ -290,11 +362,13 @@ def health():
         "groq_status": groq_status,
         "ai_cooldown": f"{ai_cooldown_seconds}s",
         "last_ai": time.ctime(last_ai_time) if last_ai_time else "Never",
-        "moderation": {
-            "enabled": bool(GROUP_ID and DELETER_URL),
+        "ban_system": {
+            "enabled": bool(GROUP_ID and BAN_SERVICE_URL),
             "group_id": GROUP_ID or "MISSING",
-            "deleter_url": DELETER_URL or "MISSING",
-            "swear_words": len(SWEAR_WORDS)
+            "ban_service_url": BAN_SERVICE_URL or "MISSING",
+            "instant_ban_words": len(INSTANT_BAN_WORDS),
+            "regular_swear_words": len(REGULAR_SWEAR_WORDS),
+            "tracked_users": len(user_swear_counts)
         },
         "free_limit": "1M tokens/month (~20k short responses)"
     }
@@ -306,14 +380,16 @@ def test():
     return {"test_joke": test_response}
 
 if __name__ == "__main__":
-    logger.info("🚀 Starting ClankerAI Bot (Groq-powered)")
+    logger.info("🚀 Starting ClankerAI Bot with Ban System")
     logger.info(f"Bot ID: {'SET' if BOT_ID else 'MISSING'}")
     logger.info(f"Bot Name: {BOT_NAME}")
     logger.info(f"Groq Key: {'SET' if GROQ_API_KEY else 'MISSING'}")
     logger.info(f"AI Cooldown: {ai_cooldown_seconds}s")
-    logger.info(f"Moderation: {'ENABLED' if GROUP_ID and DELETER_URL else 'DISABLED'}")
-    if GROUP_ID and DELETER_URL:
-        logger.info(f"  Group: {GROUP_ID}, Deleter: {DELETER_URL}")
+    logger.info(f"Ban System: {'ENABLED' if GROUP_ID and BAN_SERVICE_URL else 'DISABLED'}")
+    if GROUP_ID and BAN_SERVICE_URL:
+        logger.info(f"  Group: {GROUP_ID}, Ban Service: {BAN_SERVICE_URL}")
+    logger.info(f"Instant Ban Words: {len(INSTANT_BAN_WORDS)}")
+    logger.info(f"Regular Swear Words: {len(REGULAR_SWEAR_WORDS)}")
     
     # Quick startup test
     if GROQ_API_KEY:
