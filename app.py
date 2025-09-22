@@ -15,6 +15,66 @@ BOT_ID = os.getenv("BOT_ID")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 BOT_NAME = os.getenv("BOT_NAME", "ClankerAI")  # Add your bot's display name
 
+# NEW: Moderation config (added at top)
+GROUP_ID = os.getenv("GROUP_ID")
+DELETER_URL = os.getenv("DELETER_URL")
+SWEAR_WORDS = [
+    'fuck', 'fucking', 'fucked', 'fucker',
+    'shit', 'shitting', 'shitty',
+    'bitch', 'bitches',
+    'ass', 'asshole', 'asshat',
+    'cunt',
+    'dick', 'dickhead',
+    'piss', 'pissed',
+    'damn',
+    'bastard',
+    'slut',
+    'whore',
+    'retard',
+    'loraxmybabe'
+]
+
+# NEW: Swear deletion function (added)
+def forward_to_deleter(message_id, swear_word):
+    """Forward swear to OAuth deletion service."""
+    if not DELETER_URL:
+        logger.warning("No DELETER_URL configured - can't delete swears")
+        return False
+    
+    payload = {
+        'message_id': message_id,
+        'reason': f'Swear: {swear_word}'
+    }
+    
+    try:
+        response = requests.post(f"{DELETER_URL}/delete", json=payload, timeout=5)
+        if response.status_code == 200:
+            logger.info(f"✅ Deleted {message_id} via OAuth: {swear_word}")
+            return True
+        else:
+            logger.error(f"❌ Delete failed {response.status_code}: {response.text}")
+            return False
+    except Exception as e:
+        logger.error(f"❌ Forward error: {e}")
+        return False
+
+def check_for_swears(text, message_id):
+    """Check if message contains swear words."""
+    if not GROUP_ID:
+        logger.warning("No GROUP_ID configured - skipping swear check")
+        return False
+    
+    text_lower = text.lower()
+    text_words = text_lower.split()
+    
+    for word in text_words:
+        clean_word = word.strip('.,!?"\'').lower()
+        if clean_word in SWEAR_WORDS:
+            logger.info(f"Swear detected: '{clean_word}' in {message_id}")
+            return forward_to_deleter(message_id, clean_word)
+    
+    return False
+
 # Cooldowns
 last_sent_time = 0
 cooldown_seconds = 10
@@ -150,12 +210,23 @@ def webhook():
         if not data or 'text' not in data:
             return '', 200
         
-        text = data['text'].lower()
+        # NEW: Check for swears FIRST (before any bot logic)
+        message_id = data.get('id')
+        text = data['text']
+        if message_id and text:
+            swear_deleted = check_for_swears(text, message_id)
+            if swear_deleted:
+                # Message was deleted - skip all bot logic
+                logger.info(f"Message {message_id} deleted due to swear - skipping bot responses")
+                return '', 200
+        
+        # ORIGINAL BOT LOGIC (unchanged)
+        text_lower = text.lower()
         sender = data.get('name', 'Someone')
         attachments = data.get("attachments", [])
         
         # ClankerAI trigger - FIXED LOGIC
-        if 'clankerai' in text:
+        if 'clankerai' in text_lower:
             full_text = data['text']
             prompt = extract_prompt(full_text, sender)
             
@@ -178,9 +249,9 @@ def webhook():
                 return '', 200
         
         # Your existing triggers (unchanged)
-        if 'clean memes' in text:
+        if 'clean memes' in text_lower:
             send_message("We're the best!")
-        elif 'wsg' in text:
+        elif 'wsg' in text_lower:
             send_message("God is good")
         elif 'has left the group' in text and data.get("sender_type") == "system":
             send_message("GAY")
@@ -215,7 +286,7 @@ def groups():
 
 @app.route('/health', methods=['GET'])
 def health():
-    """Health check endpoint"""
+    """Health check endpoint - UPDATED with moderation info"""
     try:
         # Test Groq API quickly
         test_response = ask_groq("say hi")
@@ -231,6 +302,13 @@ def health():
         "groq_status": groq_status,
         "ai_cooldown": f"{ai_cooldown_seconds}s",
         "last_ai": time.ctime(last_ai_time) if last_ai_time else "Never",
+        # NEW: Moderation status
+        "moderation": {
+            "enabled": bool(GROUP_ID and DELETER_URL),
+            "group_id": GROUP_ID or "MISSING",
+            "deleter_url": DELETER_URL or "MISSING",
+            "swear_words": len(SWEAR_WORDS)
+        },
         "free_limit": "1M tokens/month (~20k short responses)"
     }
 
@@ -246,6 +324,10 @@ if __name__ == "__main__":
     logger.info(f"Bot Name: {BOT_NAME}")
     logger.info(f"Groq Key: {'SET' if GROQ_API_KEY else 'MISSING'}")
     logger.info(f"AI Cooldown: {ai_cooldown_seconds}s")
+    # NEW: Moderation startup info
+    logger.info(f"Moderation: {'ENABLED' if GROUP_ID and DELETER_URL else 'DISABLED'}")
+    if GROUP_ID and DELETER_URL:
+        logger.info(f"  Group: {GROUP_ID}, Deleter: {DELETER_URL}")
     
     # Quick startup test
     if GROQ_API_KEY:
