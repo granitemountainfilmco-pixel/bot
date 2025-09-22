@@ -79,7 +79,7 @@ def check_for_violations(text, user_id, username):
             logger.info(f"🚨 INSTANT BAN: '{clean_word}' from {username}")
             success = call_ban_service(user_id, username, f"Instant ban: {clean_word}")
             if success:
-                send_message(f"🔨 {username} has been permanently banned for using prohibited language.")
+                send_system_message(f"🔨 {username} has been permanently banned for using prohibited language.")
             return True
     
     # Check for regular swear words
@@ -102,14 +102,14 @@ def check_for_violations(text, user_id, username):
                 # Ban after 10 swears
                 success = call_ban_service(user_id, username, f"10 strikes - swear words")
                 if success:
-                    send_message(f"🔨 {username} has been banned for repeated inappropriate language (10 strikes).")
+                    send_system_message(f"🔨 {username} has been banned for repeated inappropriate language (10 strikes).")
                     # Reset count after ban
                     user_swear_counts[user_id] = 0
                 return True
             else:
                 # Warning message
                 remaining = 10 - current_count
-                send_message(f"⚠️ {username} - Warning {current_count}/10 for inappropriate language. {remaining} more and you're banned!")
+                send_system_message(f"⚠️ {username} - Warning {current_count}/10 for inappropriate language. {remaining} more and you're banned!")
             
             break  # Only count one swear per message
     
@@ -120,6 +120,62 @@ last_sent_time = 0
 cooldown_seconds = 10
 last_ai_time = 0
 ai_cooldown_seconds = 60
+
+def send_system_message(text):
+    """Send system messages without cooldown"""
+    if not BOT_ID:
+        logger.error("No BOT_ID configured - can't send messages")
+        return False
+    
+    url = "https://api.groupme.com/v3/bots/post"
+    payload = {"bot_id": BOT_ID, "text": text}
+    try:
+        response = requests.post(url, json=payload, timeout=5)
+        response.raise_for_status()
+        logger.info(f"System message sent: {text[:30]}...")
+        return True
+    except Exception as e:
+        logger.error(f"GroupMe system send error: {e}")
+        return False
+
+def send_message(text):
+    """Send to GroupMe with cooldown"""
+    global last_sent_time
+    now = time.time()
+    if now - last_sent_time < cooldown_seconds:
+        logger.info("Regular cooldown active")
+        return False
+    
+    if not BOT_ID:
+        logger.error("No BOT_ID configured - can't send messages")
+        return False
+    
+    url = "https://api.groupme.com/v3/bots/post"
+    payload = {"bot_id": BOT_ID, "text": text}
+    try:
+        response = requests.post(url, json=payload, timeout=5)
+        response.raise_for_status()
+        last_sent_time = now
+        logger.info(f"Regular message sent: {text[:30]}...")
+        return True
+    except Exception as e:
+        logger.error(f"GroupMe send error: {e}")
+        return False
+
+def send_ai_message(text):
+    """Send AI response with cooldown - NO PREFIX"""
+    global last_ai_time
+    now = time.time()
+    if now - last_ai_time < ai_cooldown_seconds:
+        remaining = int(ai_cooldown_seconds - (now - last_ai_time))
+        logger.info(f"AI cooldown: {remaining}s remaining")
+        return False
+    
+    success = send_message(text)
+    if success:
+        last_ai_time = now
+        logger.info("AI message sent successfully")
+    return success
 
 def ask_groq(prompt):
     """Ask Groq (your existing function - unchanged)"""
@@ -171,41 +227,6 @@ def ask_groq(prompt):
         logger.error(f"Groq error: {e}")
         return "⚠️ Unexpected glitch—ping again!"
 
-def send_message(text):
-    """Send to GroupMe with cooldown"""
-    global last_sent_time
-    now = time.time()
-    if now - last_sent_time < cooldown_seconds:
-        logger.info("Regular cooldown active")
-        return False
-    
-    url = "https://api.groupme.com/v3/bots/post"
-    payload = {"bot_id": BOT_ID, "text": text}
-    try:
-        response = requests.post(url, json=payload, timeout=5)
-        response.raise_for_status()
-        last_sent_time = now
-        logger.info(f"Sent: {text[:30]}...")
-        return True
-    except Exception as e:
-        logger.error(f"GroupMe send error: {e}")
-        return False
-
-def send_ai_message(text):
-    """Send AI response with cooldown - NO PREFIX"""
-    global last_ai_time
-    now = time.time()
-    if now - last_ai_time < ai_cooldown_seconds:
-        remaining = int(ai_cooldown_seconds - (now - last_ai_time))
-        logger.info(f"AI cooldown: {remaining}s remaining")
-        return False
-    
-    success = send_message(text)
-    if success:
-        last_ai_time = now
-        logger.info("AI message sent successfully")
-    return success
-
 def extract_prompt(full_text, sender):
     """Extract meaningful prompt from message - ignore bot's own messages"""
     text_lower = full_text.lower()
@@ -239,76 +260,145 @@ def extract_prompt(full_text, sender):
     
     return None
 
+def is_system_message(data):
+    """
+    Check if this is a GroupMe system message based on API docs
+    System messages have sender_type: "system" and specific sender names
+    """
+    sender_type = data.get('sender_type')
+    sender_name = data.get('name', '').lower()
+    
+    # GroupMe system messages have sender_type "system"
+    if sender_type == "system":
+        return True
+    
+    # Also check for system-like sender names (fallback)
+    system_senders = ['groupme', 'system', '']
+    if sender_name in system_senders:
+        return True
+    
+    return False
+
+def is_real_system_event(text_lower):
+    """
+    Check if this is a real GroupMe system event (not user typing the same text)
+    Based on GroupMe API system message patterns
+    """
+    # Exact matches for GroupMe system message formats
+    system_patterns = [
+        'has joined the group',
+        'has left the group',
+        'was added to the group',
+        'was removed from the group',
+        'removed',
+        'added'
+    ]
+    
+    for pattern in system_patterns:
+        if pattern in text_lower:
+            return True
+    return False
+
 @app.route('/webhook', methods=['POST'])
 def webhook():
     try:
         data = request.get_json()
         logger.info(f"Webhook received: {data.get('text', '')[:50]}...")
+        logger.info(f"Sender type: {data.get('sender_type')}, Sender: {data.get('name')}")
         
         if not data or 'text' not in data:
             return '', 200
         
-        # Only process user messages (not system messages)
-        if data.get('sender_type') != 'user':
-            return '', 200
-        
-        # Get message details
+        # Get all message details
         text = data['text']
+        sender_type = data.get('sender_type')
         sender = data.get('name', 'Someone')
         user_id = data.get('user_id')
-        
-        # Don't moderate the bot's own messages
-        if sender.lower() == BOT_NAME.lower():
-            return '', 200
-        
-        # CHECK FOR VIOLATIONS FIRST (before any bot logic)
-        if user_id and text:
-            violation_found = check_for_violations(text, user_id, sender)
-            if violation_found:
-                # User was banned or warned - continue with normal bot logic
-                # (we don't skip other responses for warnings)
-                pass
-        
-        # REST OF YOUR EXISTING BOT LOGIC (unchanged)
         text_lower = text.lower()
         attachments = data.get("attachments", [])
         
-        # ClankerAI trigger
+        logger.info(f"Processing - Type: {sender_type}, Sender: {sender}, Text: {text[:50]}...")
+        
+        # SYSTEM MESSAGE HANDLING - GroupMe API docs say sender_type = "system"
+        if sender_type == "system" or is_system_message(data):
+            logger.info(f"Processing SYSTEM message from {sender}: {text}")
+            
+            # Only trigger for real GroupMe system events
+            if is_real_system_event(text_lower):
+                if 'has left the group' in text_lower:
+                    send_system_message("GAY")
+                    logger.info("✅ SYSTEM TRIGGER: User left - sent 'GAY'")
+                elif 'has joined the group' in text_lower:
+                    send_system_message("Welcome to Clean Memes, check the rules and announcement topics before chatting!")
+                    logger.info("✅ SYSTEM TRIGGER: User joined - sent welcome message")
+                elif 'was removed from the group' in text_lower or 'removed' in text_lower:
+                    send_system_message("this could be you if you break the rules, watch it. 👀")
+                    logger.info("✅ SYSTEM TRIGGER: User removed - sent warning message")
+                else:
+                    logger.info(f"Unhandled system event: {text}")
+            else:
+                logger.info(f"Non-event system message: {text}")
+            return '', 200
+        
+        # Skip non-user messages (system messages already handled)
+        if sender_type not in ['user']:
+            logger.info(f"Skipping non-user message: {sender_type}")
+            return '', 200
+        
+        # Don't process bot's own messages
+        if sender.lower() == BOT_NAME.lower():
+            logger.info(f"Ignoring own message from {sender}")
+            return '', 200
+        
+        # PREVENT USERS FROM TRIGGERING SYSTEM RESPONSES
+        # Check if user message mimics system events
+        if is_real_system_event(text_lower):
+            logger.info(f"🚫 User {sender} tried to trigger system event: {text[:50]}...")
+            return '', 200
+        
+        # BAN SYSTEM CHECKS - ONLY FOR REAL USER MESSAGES
+        if user_id and text:
+            violation_found = check_for_violations(text, user_id, sender)
+            if violation_found:
+                logger.info(f"Violation handled for {sender}")
+                # Continue with bot logic even after violation
+        
+        # CLANKERAI TRIGGER
         if 'clankerai' in text_lower:
             full_text = data['text']
             prompt = extract_prompt(full_text, sender)
             
             if prompt:
-                logger.info(f"ClankerAI triggered by {sender}: {prompt[:50]}...")
+                logger.info(f"🤖 ClankerAI triggered by {sender}: {prompt[:50]}...")
                 ai_prompt = f"{sender} says: {prompt}"
                 response = ask_groq(ai_prompt)
                 send_ai_message(response)
-                return '', 200
+                logger.info(f"✅ AI response sent for {sender}")
             else:
-                logger.info(f"Ignoring empty ClankerAI ping from {sender}")
-                return '', 200
+                logger.info(f"⚠️ Ignoring empty ClankerAI ping from {sender}")
+            return '', 200
         
-        # Your existing triggers (unchanged)
+        # OTHER USER TRIGGERS
         if 'clean memes' in text_lower:
             send_message("We're the best!")
+            logger.info(f"✅ Trigger: 'clean memes' from {sender}")
         elif 'wsg' in text_lower:
             send_message("God is good")
-        elif 'has left the group' in text and data.get("sender_type") == "system":
-            send_message("GAY")
+            logger.info(f"✅ Trigger: 'wsg' from {sender}")
         elif 'cooper is my pookie' in text:
             send_message("me too bro")
-        elif 'has joined the group' in text and data.get("sender_type") == "system":
-            send_message("Welcome to Clean Memes, check the rules and announcement topics before chatting!")
-        elif 'removed' in text and data.get("sender_type") == "system":
-            send_message("this could be you if you break the rules, watch it. 👀")
+            logger.info(f"✅ Trigger: 'cooper is my pookie' from {sender}")
         elif 'https:' in text:
             if not any(att.get("type") == "video" for att in attachments):
                 send_message("Delete this, links are not allowed, admins have been notified")
+                logger.info(f"✅ Trigger: Link detected from {sender}")
         
+        logger.info(f"Message processed from {sender}: {text[:30]}...")
         return '', 200
         
     except Exception as e:
         logger.error(f"Webhook error: {e}")
+        logger.error(f"Error context - Data: {data if 'data' in locals() else 'No data'}")
         return '', 500
 
 @app.route('/reset-count', methods=['POST'])
@@ -370,6 +460,15 @@ def health():
             "regular_swear_words": len(REGULAR_SWEAR_WORDS),
             "tracked_users": len(user_swear_counts)
         },
+        "system_triggers": {
+            "enabled": True,
+            "sender_type_check": "system",
+            "events": {
+                "left": "GAY",
+                "joined": "Welcome message", 
+                "removed": "Rules warning"
+            }
+        },
         "free_limit": "1M tokens/month (~20k short responses)"
     }
 
@@ -379,8 +478,52 @@ def test():
     test_response = ask_groq("tell me a short joke")
     return {"test_joke": test_response}
 
+@app.route('/test-system', methods=['POST'])
+def test_system():
+    """Test system message handling with GroupMe API format"""
+    try:
+        test_data = request.get_json() or {}
+        test_text = test_data.get('text', 'John Doe has left the group')
+        test_type = test_data.get('sender_type', 'system')
+        test_sender = test_data.get('name', 'GroupMe')
+        
+        logger.info(f"🧪 Testing system message: '{test_text}' (type: {test_type}, sender: {test_sender})")
+        
+        # Create mock data structure
+        mock_data = {
+            'text': test_text,
+            'sender_type': test_type,
+            'name': test_sender
+        }
+        
+        # Test the system detection
+        is_system = is_system_message(mock_data)
+        is_event = is_real_system_event(test_text.lower())
+        
+        logger.info(f"System detection: {is_system}, Event detection: {is_event}")
+        
+        if test_type == "system" and is_event:
+            text_lower = test_text.lower()
+            if 'has left the group' in text_lower:
+                result = send_system_message("GAY")
+                return {"result": "User left trigger fired", "sent": result, "detection": {"is_system": is_system, "is_event": is_event}}
+            elif 'has joined the group' in text_lower:
+                result = send_system_message("Welcome to Clean Memes, check the rules and announcement topics before chatting!")
+                return {"result": "User joined trigger fired", "sent": result, "detection": {"is_system": is_system, "is_event": is_event}}
+            elif 'was removed from the group' in text_lower or 'removed' in text_lower:
+                result = send_system_message("this could be you if you break the rules, watch it. 👀")
+                return {"result": "User removed trigger fired", "sent": result, "detection": {"is_system": is_system, "is_event": is_event}}
+            else:
+                return {"result": "System message detected but no trigger matched", "detection": {"is_system": is_system, "is_event": is_event}}
+        else:
+            return {"result": f"Test failed - System: {is_system}, Event: {is_event}", "expected_type": "system"}
+            
+    except Exception as e:
+        logger.error(f"System test error: {e}")
+        return {"error": str(e)}, 500
+
 if __name__ == "__main__":
-    logger.info("🚀 Starting ClankerAI Bot with Ban System")
+    logger.info("🚀 Starting ClankerAI Bot with Enhanced System Message Handling")
     logger.info(f"Bot ID: {'SET' if BOT_ID else 'MISSING'}")
     logger.info(f"Bot Name: {BOT_NAME}")
     logger.info(f"Groq Key: {'SET' if GROQ_API_KEY else 'MISSING'}")
@@ -390,6 +533,12 @@ if __name__ == "__main__":
         logger.info(f"  Group: {GROUP_ID}, Ban Service: {BAN_SERVICE_URL}")
     logger.info(f"Instant Ban Words: {len(INSTANT_BAN_WORDS)}")
     logger.info(f"Regular Swear Words: {len(REGULAR_SWEAR_WORDS)}")
+    
+    logger.info("📋 SYSTEM MESSAGE TRIGGERS (GroupMe API):")
+    logger.info("  sender_type: 'system' + 'has left the group' → 'GAY'")
+    logger.info("  sender_type: 'system' + 'has joined the group' → Welcome message")
+    logger.info("  sender_type: 'system' + 'removed' → Rules warning")
+    logger.info("  User messages with these phrases → IGNORED for system triggers")
     
     # Quick startup test
     if GROQ_API_KEY:
@@ -403,4 +552,7 @@ if __name__ == "__main__":
     
     port = int(os.getenv("PORT", 5000))
     logger.info(f"🚀 Bot running on port {port}")
+    logger.info("🧪 Test endpoints:")
+    logger.info("  POST /test-system {'text': 'John Doe has left the group', 'sender_type': 'system', 'name': 'GroupMe'}")
+    logger.info("  GET /health")
     app.run(host="0.0.0.0", port=port, debug=False)
