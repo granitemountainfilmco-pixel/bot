@@ -98,9 +98,9 @@ def check_for_violations(text, user_id, username):
             current_count = user_swear_counts[user_id]
             logger.info(f"{username} swear count: {current_count}/3")
             
-            if current_count >= 3:
+            if current_count >= 10:
                 # Ban after 3 swears
-                success = call_ban_service(user_id, username, f"3 strikes - swear words")
+                success = call_ban_service(user_id, username, f"10 strikes - swear words")
                 if success:
                     send_message(f"🔨 {username} has been banned for repeated inappropriate language (3 strikes).")
                     # Reset count after ban
