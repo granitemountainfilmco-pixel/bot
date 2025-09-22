@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request
 import requests
 import os
 import time
@@ -13,11 +13,11 @@ logger = logging.getLogger(__name__)
 # Config
 BOT_ID = os.getenv("BOT_ID")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-BOT_NAME = os.getenv("BOT_NAME", "ClankerAI")
-ACCESS_TOKEN = os.getenv("ACCESS_TOKEN")  # Required for message deletion
-GROUP_ID = os.getenv("GROUP_ID")
+BOT_NAME = os.getenv("BOT_NAME", "ClankerAI")  # Add your bot's display name
 
-# Swear words list
+# NEW: Moderation config (added at top)
+GROUP_ID = os.getenv("GROUP_ID")
+DELETER_URL = os.getenv("DELETER_URL")
 SWEAR_WORDS = [
     'fuck', 'fucking', 'fucked', 'fucker',
     'shit', 'shitting', 'shitty',
@@ -34,65 +34,55 @@ SWEAR_WORDS = [
     'loraxmybabe'
 ]
 
-# Cooldowns
-last_sent_time = 0
-cooldown_seconds = 10
-last_ai_time = 0
-ai_cooldown_seconds = 60
-
-def delete_message_directly(message_id):
-    """Delete message using GroupMe API directly"""
-    if not ACCESS_TOKEN or not GROUP_ID:
-        logger.warning("Missing ACCESS_TOKEN or GROUP_ID - can't delete messages")
+# NEW: Swear deletion function (added)
+def forward_to_deleter(message_id, swear_word):
+    """Forward swear to OAuth deletion service."""
+    if not DELETER_URL:
+        logger.warning("No DELETER_URL configured - can't delete swears")
         return False
     
-    # GroupMe API endpoint for destroying messages
-    url = f"https://api.groupme.com/v3/groups/{GROUP_ID}/messages/{message_id}?token={ACCESS_TOKEN}"
+    payload = {
+        'message_id': message_id,
+        'reason': f'Swear: {swear_word}'
+    }
     
     try:
-        response = requests.delete(url, timeout=5)
+        response = requests.post(f"{DELETER_URL}/delete", json=payload, timeout=5)
         if response.status_code == 200:
-            logger.info(f"✅ Successfully deleted message {message_id}")
+            logger.info(f"✅ Deleted {message_id} via OAuth: {swear_word}")
             return True
         else:
             logger.error(f"❌ Delete failed {response.status_code}: {response.text}")
             return False
     except Exception as e:
-        logger.error(f"❌ Delete error: {e}")
+        logger.error(f"❌ Forward error: {e}")
         return False
 
-def check_for_swears(text, message_id, sender_name):
-    """Check if message contains swear words and delete if found"""
-    if not GROUP_ID or not ACCESS_TOKEN:
-        logger.warning("Missing GROUP_ID or ACCESS_TOKEN - skipping swear check")
-        return False
-    
-    # Don't moderate the bot's own messages
-    if sender_name.lower() == BOT_NAME.lower():
+def check_for_swears(text, message_id):
+    """Check if message contains swear words."""
+    if not GROUP_ID:
+        logger.warning("No GROUP_ID configured - skipping swear check")
         return False
     
     text_lower = text.lower()
     text_words = text_lower.split()
     
     for word in text_words:
-        # Clean word of punctuation
-        clean_word = word.strip('.,!?"\'()[]{}').lower()
+        clean_word = word.strip('.,!?"\'').lower()
         if clean_word in SWEAR_WORDS:
-            logger.info(f"Swear detected: '{clean_word}' from {sender_name} in message {message_id}")
-            
-            # Try to delete the message
-            if delete_message_directly(message_id):
-                # Send a warning message
-                send_message(f"@{sender_name} - Message deleted for inappropriate language. Please keep it clean! 🧼")
-                return True
-            else:
-                logger.error(f"Failed to delete swear message {message_id}")
-                return False
+            logger.info(f"Swear detected: '{clean_word}' in {message_id}")
+            return forward_to_deleter(message_id, clean_word)
     
     return False
 
+# Cooldowns
+last_sent_time = 0
+cooldown_seconds = 10
+last_ai_time = 0
+ai_cooldown_seconds = 60
+
 def ask_groq(prompt):
-    """Ask Groq API for AI response"""
+    """Ask Groq (fixed model deprecation)"""
     if not GROQ_API_KEY:
         return "❌ API key missing!"
         
@@ -113,7 +103,7 @@ def ask_groq(prompt):
     }
     
     try:
-        logger.info(f"Sending to Groq: {prompt[:50]}...")
+        logger.info(f"Sending to Grok: {prompt[:50]}...")
         response = requests.post(url, headers=headers, json=data, timeout=10)
         response.raise_for_status()
         
@@ -142,7 +132,7 @@ def ask_groq(prompt):
         return "⚠️ Unexpected glitch—ping again!"
 
 def send_message(text):
-    """Send message to GroupMe with cooldown"""
+    """Send to GroupMe with cooldown"""
     global last_sent_time
     now = time.time()
     if now - last_sent_time < cooldown_seconds:
@@ -162,7 +152,7 @@ def send_message(text):
         return False
 
 def send_ai_message(text):
-    """Send AI response with cooldown"""
+    """Send AI response with cooldown - NO PREFIX"""
     global last_ai_time
     now = time.time()
     if now - last_ai_time < ai_cooldown_seconds:
@@ -170,18 +160,20 @@ def send_ai_message(text):
         logger.info(f"AI cooldown: {remaining}s remaining")
         return False
     
-    success = send_message(text)
+    # Just send the response without "ClankerAI:" prefix
+    full_message = text  # No prefix!
+    success = send_message(full_message)
     if success:
         last_ai_time = now
         logger.info("AI message sent successfully")
     return success
 
 def extract_prompt(full_text, sender):
-    """Extract meaningful prompt from message"""
+    """Extract meaningful prompt from message - ignore bot's own messages"""
     text_lower = full_text.lower()
     
     # Ignore messages from the bot itself
-    if sender.lower() == BOT_NAME.lower():
+    if sender.lower() == BOT_NAME.lower() or "🤖 clankerai" in text_lower:
         logger.info(f"Ignoring own message from {sender}")
         return None
     
@@ -191,12 +183,12 @@ def extract_prompt(full_text, sender):
         # Extract everything after "clankerai"
         prompt = full_text[clanker_pos + len('clankerai'):].strip()
         
-        # If nothing meaningful after clankerai, return None
+        # If nothing meaningful after clankerai, return None (don't respond)
         if not prompt or prompt in ['!', '?', '.', '', ' ', '\n']:
             logger.info(f"Empty prompt from {sender} - ignoring")
             return None
         
-        # Clean up the prompt
+        # Clean up the prompt (remove leading punctuation/spaces)
         prompt = prompt.lstrip(' .,!?').strip()
         
         # If still empty after cleanup, ignore
@@ -218,45 +210,45 @@ def webhook():
         if not data or 'text' not in data:
             return '', 200
         
-        # Get message details
+        # NEW: Check for swears FIRST (before any bot logic)
         message_id = data.get('id')
         text = data['text']
+        if message_id and text:
+            swear_deleted = check_for_swears(text, message_id)
+            if swear_deleted:
+                # Message was deleted - skip all bot logic
+                logger.info(f"Message {message_id} deleted due to swear - skipping bot responses")
+                return '', 200
+        
+        # ORIGINAL BOT LOGIC (unchanged)
+        text_lower = text.lower()
         sender = data.get('name', 'Someone')
         attachments = data.get("attachments", [])
         
-        # Check for swears FIRST (before any bot logic)
-        if message_id and text:
-            swear_deleted = check_for_swears(text, message_id, sender)
-            if swear_deleted:
-                # Message was deleted - skip all other bot logic
-                logger.info(f"Message {message_id} deleted due to swear - skipping other responses")
-                return '', 200
-        
-        # Rest of bot logic (unchanged)
-        text_lower = text.lower()
-        
-        # ClankerAI trigger
+        # ClankerAI trigger - FIXED LOGIC
         if 'clankerai' in text_lower:
             full_text = data['text']
             prompt = extract_prompt(full_text, sender)
             
+            # Only respond if we got a meaningful prompt AND it's not our own message
             if prompt:
                 logger.info(f"ClankerAI triggered by {sender}: {prompt[:50]}...")
                 
-                # Inject sender name into AI prompt
+                # Inject sender name into hidden AI prompt
                 ai_prompt = f"{sender} says: {prompt}"
                 
                 # Get AI response
                 response = ask_groq(ai_prompt)
                 
-                # Send response
+                # Send WITHOUT prefix to avoid self-triggering
                 send_ai_message(response)
                 return '', 200
             else:
+                # Empty prompt - don't respond, just log
                 logger.info(f"Ignoring empty ClankerAI ping from {sender}")
                 return '', 200
         
-        # Other triggers
+        # Your existing triggers (unchanged)
         if 'clean memes' in text_lower:
             send_message("We're the best!")
         elif 'wsg' in text_lower:
@@ -282,7 +274,7 @@ def webhook():
 
 @app.route('/groups', methods=['GET'])
 def groups():
-    """Get groups endpoint"""
+    """Get groups endpoint (unchanged from your original)"""
     url = "https://api.groupme.com/v3/groups"
     headers = {"X-Access-Token": os.getenv("ACCESS_TOKEN")}
     try:
@@ -294,8 +286,9 @@ def groups():
 
 @app.route('/health', methods=['GET'])
 def health():
-    """Health check endpoint"""
+    """Health check endpoint - UPDATED with moderation info"""
     try:
+        # Test Groq API quickly
         test_response = ask_groq("say hi")
         groq_status = "OK" if len(test_response) > 3 else f"ERROR: {test_response}"
     except:
@@ -309,10 +302,11 @@ def health():
         "groq_status": groq_status,
         "ai_cooldown": f"{ai_cooldown_seconds}s",
         "last_ai": time.ctime(last_ai_time) if last_ai_time else "Never",
+        # NEW: Moderation status
         "moderation": {
-            "enabled": bool(GROUP_ID and ACCESS_TOKEN),
+            "enabled": bool(GROUP_ID and DELETER_URL),
             "group_id": GROUP_ID or "MISSING",
-            "access_token": "SET" if ACCESS_TOKEN else "MISSING",
+            "deleter_url": DELETER_URL or "MISSING",
             "swear_words": len(SWEAR_WORDS)
         },
         "free_limit": "1M tokens/month (~20k short responses)"
@@ -320,30 +314,20 @@ def health():
 
 @app.route('/test', methods=['GET'])
 def test():
-    """Test endpoint"""
+    """Simple test endpoint"""
     test_response = ask_groq("tell me a short joke")
     return {"test_joke": test_response}
-
-@app.route('/test-delete', methods=['POST'])
-def test_delete():
-    """Test message deletion (for debugging)"""
-    data = request.get_json()
-    message_id = data.get('message_id')
-    
-    if not message_id:
-        return {"error": "message_id required"}, 400
-    
-    success = delete_message_directly(message_id)
-    return {"success": success, "message_id": message_id}
 
 if __name__ == "__main__":
     logger.info("🚀 Starting ClankerAI Bot (Groq-powered)")
     logger.info(f"Bot ID: {'SET' if BOT_ID else 'MISSING'}")
     logger.info(f"Bot Name: {BOT_NAME}")
     logger.info(f"Groq Key: {'SET' if GROQ_API_KEY else 'MISSING'}")
-    logger.info(f"Access Token: {'SET' if ACCESS_TOKEN else 'MISSING'}")
     logger.info(f"AI Cooldown: {ai_cooldown_seconds}s")
-    logger.info(f"Moderation: {'ENABLED' if GROUP_ID and ACCESS_TOKEN else 'DISABLED'}")
+    # NEW: Moderation startup info
+    logger.info(f"Moderation: {'ENABLED' if GROUP_ID and DELETER_URL else 'DISABLED'}")
+    if GROUP_ID and DELETER_URL:
+        logger.info(f"  Group: {GROUP_ID}, Deleter: {DELETER_URL}")
     
     # Quick startup test
     if GROQ_API_KEY:
