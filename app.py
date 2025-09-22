@@ -96,19 +96,19 @@ def check_for_violations(text, user_id, username):
             user_swear_counts[user_id] += 1
             
             current_count = user_swear_counts[user_id]
-            logger.info(f"{username} swear count: {current_count}/3")
+            logger.info(f"{username} swear count: {current_count}/10")
             
             if current_count >= 10:
-                # Ban after 3 swears
+                # Ban after 10 swears
                 success = call_ban_service(user_id, username, f"10 strikes - swear words")
                 if success:
-                    send_message(f"🔨 {username} has been banned for repeated inappropriate language (3 strikes).")
+                    send_message(f"🔨 {username} has been banned for repeated inappropriate language (10 strikes).")
                     # Reset count after ban
                     user_swear_counts[user_id] = 0
                 return True
             else:
                 # Warning message
-                remaining = 3 - current_count
+                remaining = 10 - current_count
                 send_message(f"⚠️ {username} - Warning {current_count}/10 for inappropriate language. {remaining} more and you're banned!")
             
             break  # Only count one swear per message
@@ -234,7 +234,7 @@ def extract_prompt(full_text, sender):
             logger.info(f"Prompt too short from {sender} - ignoring")
             return None
         
-        logger.info(f"Extracted prompt: '{prompt}'")
+        logger.info(f"Extracted prompt: '{promrompt}'")
         return prompt
     
     return None
@@ -337,7 +337,7 @@ def reset_count():
 def groups():
     """Get groups endpoint"""
     url = "https://api.groupme.com/v3/groups"
-    headers = {"X-Access-Token": os.getenv("ACCESS_TOKEN")}
+    headers = {"X-Access-Token": os.getenv("GROUPME_ACCESS_TOKEN")}
     try:
         response = requests.get(url, headers=headers)
         response.raise_for_status()
