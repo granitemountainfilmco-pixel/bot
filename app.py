@@ -122,7 +122,7 @@ last_ai_time = 0
 ai_cooldown_seconds = 60
 
 def send_system_message(text):
-    """Send system messages without cooldown"""
+    """Send system messages without cooldown (main chat only)"""
     if not BOT_ID:
         logger.error("No BOT_ID configured - can't send messages")
         return False
@@ -139,7 +139,7 @@ def send_system_message(text):
         return False
 
 def send_message(text):
-    """Send to GroupMe with cooldown"""
+    """Send to GroupMe with cooldown (main chat only)"""
     global last_sent_time
     now = time.time()
     if now - last_sent_time < cooldown_seconds:
@@ -163,19 +163,38 @@ def send_message(text):
         return False
 
 def send_ai_message(text):
-    """Send AI response with cooldown - NO PREFIX"""
+    """Send AI response with cooldown (in subtopic 'clean memes chat memes')"""
     global last_ai_time
     now = time.time()
     if now - last_ai_time < ai_cooldown_seconds:
         remaining = int(ai_cooldown_seconds - (now - last_ai_time))
         logger.info(f"AI cooldown: {remaining}s remaining")
         return False
-    
-    success = send_message(text)
-    if success:
+
+    if not BOT_ID:
+        logger.error("No BOT_ID configured - can't send AI messages")
+        return False
+
+    url = "https://api.groupme.com/v3/bots/post"
+    payload = {
+        "bot_id": BOT_ID,
+        "text": text,
+        "attachments": [
+            {
+                "type": "topic",
+                "topic": "clean memes chat memes"
+            }
+        ]
+    }
+    try:
+        response = requests.post(url, json=payload, timeout=5)
+        response.raise_for_status()
         last_ai_time = now
-        logger.info("AI message sent successfully")
-    return success
+        logger.info(f"AI message sent in subtopic 'clean memes chat memes': {text[:30]}...")
+        return True
+    except Exception as e:
+        logger.error(f"GroupMe AI send error: {e}")
+        return False
 
 def ask_groq(prompt):
     """Ask Groq (your existing function - unchanged)"""
@@ -299,6 +318,25 @@ def is_real_system_event(text_lower):
             return True
     return False
 
+def get_subtopic_from_attachments(data):
+    """
+    Robustly check incoming message attachments for a topic/subtopic.
+    GroupMe may present a topic attachment with type 'topic' and either 'topic' or 'name' keys.
+    """
+    attachments = data.get("attachments", []) or []
+    for att in attachments:
+        if not isinstance(att, dict):
+            continue
+        if att.get("type") == "topic":
+            # att could have 'topic' or 'name' depending on payload
+            return att.get("topic") or att.get("name") or None
+        # some payloads nest info under 'payload' or similar
+        payload = att.get("payload")
+        if isinstance(payload, dict):
+            if payload.get("type") == "topic":
+                return payload.get("topic") or payload.get("name") or None
+    return None
+
 @app.route('/webhook', methods=['POST'])
 def webhook():
     try:
@@ -316,6 +354,11 @@ def webhook():
         user_id = data.get('user_id')
         text_lower = text.lower()
         attachments = data.get("attachments", [])
+        
+        # Determine subtopic (if any)
+        subtopic = get_subtopic_from_attachments(data)
+        if subtopic:
+            logger.info(f"Message subtopic detected: {subtopic}")
         
         logger.info(f"Processing - Type: {sender_type}, Sender: {sender}, Text: {text[:50]}...")
         
@@ -363,22 +406,32 @@ def webhook():
                 logger.info(f"Violation handled for {sender}")
                 # Continue with bot logic even after violation
         
-        # CLANKERAI TRIGGER
+        # --- CLANKERAI TRIGGER: ONLY ALLOWED IN subtopic 'clean memes chat memes' ---
+        # Use the same prompt extraction logic as before but gated by subtopic
         if 'clankerai' in text_lower:
+            # Extract prompt (function handles ignoring bot's own and empty prompts)
             full_text = data['text']
             prompt = extract_prompt(full_text, sender)
             
-            if prompt:
-                logger.info(f"🤖 ClankerAI triggered by {sender}: {prompt[:50]}...")
-                ai_prompt = f"{sender} says: {prompt}"
-                response = ask_groq(ai_prompt)
-                send_ai_message(response)
-                logger.info(f"✅ AI response sent for {sender}")
+            # Only allow ClankerAI to respond if message is inside the designated subtopic
+            allowed_subtopic = "clean memes chat memes"
+            if subtopic and subtopic.lower() == allowed_subtopic:
+                if prompt:
+                    logger.info(f"🤖 ClankerAI triggered by {sender} in subtopic '{subtopic}': {prompt[:50]}...")
+                    ai_prompt = f"{sender} says: {prompt}"
+                    response = ask_groq(ai_prompt)
+                    send_ai_message(response)
+                    logger.info(f"✅ AI response sent for {sender} in subtopic '{subtopic}'")
+                else:
+                    logger.info(f"⚠️ Ignoring empty ClankerAI ping from {sender} in subtopic")
+                return '', 200
             else:
-                logger.info(f"⚠️ Ignoring empty ClankerAI ping from {sender}")
-            return '', 200
+                # If clankerai used outside the allowed subtopic, politely redirect in MAIN chat
+                logger.info(f"⛔ ClankerAI attempt by {sender} outside '{allowed_subtopic}' (subtopic: {subtopic})")
+                send_message("⚠️ Use 'clankerai' in the 'clean memes chat memes' subtopic.")
+                return '', 200
         
-        # OTHER USER TRIGGERS
+        # OTHER USER TRIGGERS (main chat)
         if 'clean memes' in text_lower:
             send_message("We're the best!")
             logger.info(f"✅ Trigger: 'clean memes' from {sender}")
