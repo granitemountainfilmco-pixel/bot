@@ -3,6 +3,7 @@ import requests
 import os
 import time
 import logging
+import uuid
 
 app = Flask(__name__)
 
@@ -10,8 +11,11 @@ app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Config
-BOT_ID = os.getenv("BOT_ID")
+# Config (existing + new)
+BOT_ID = os.getenv("BOT_ID")                      # main group bot id (unchanged)
+SUBTOPIC_BOT_ID = os.getenv("SUBTOPIC_BOT_ID")    # optional: a bot that was created for the subtopic
+SUBTOPIC_ID = os.getenv("SUBTOPIC_ID")            # optional: the subgroup/topic id (ex: "123456789")
+GROUPME_ACCESS_TOKEN = os.getenv("GROUPME_ACCESS_TOKEN")  # optional: user token (only needed if not using SUBTOPIC_BOT_ID)
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 BOT_NAME = os.getenv("BOT_NAME", "ClankerAI")
 
@@ -19,7 +23,7 @@ BOT_NAME = os.getenv("BOT_NAME", "ClankerAI")
 GROUP_ID = os.getenv("GROUP_ID")
 BAN_SERVICE_URL = os.getenv("BAN_SERVICE_URL")
 
-# Swear word categories
+# Swear word categories (unchanged)
 INSTANT_BAN_WORDS = [
     'nigger', 'nigga', 'n1gger', 'n1gga'  # n-word variations
 ]
@@ -163,7 +167,13 @@ def send_message(text):
         return False
 
 def send_ai_message(text):
-    """Send AI response with cooldown (in subtopic 'clean memes chat memes')"""
+    """
+    Send AI response with cooldown (tries to post inside the subtopic).
+    Order of attempts:
+      1) Use SUBTOPIC_BOT_ID via bots.post (bot must be registered to subtopic)
+      2) Use GROUPME_ACCESS_TOKEN + SUBTOPIC_ID to POST /groups/<SUBTOPIC_ID>/messages (posts as user)
+      3) Fallback -> notify main group that AI couldn't post
+    """
     global last_ai_time
     now = time.time()
     if now - last_ai_time < ai_cooldown_seconds:
@@ -171,33 +181,46 @@ def send_ai_message(text):
         logger.info(f"AI cooldown: {remaining}s remaining")
         return False
 
-    if not BOT_ID:
-        logger.error("No BOT_ID configured - can't send AI messages")
-        return False
+    # 1) If there's a dedicated subtopic bot id, use it (preferred; appearance: bot in the subtopic)
+    if SUBTOPIC_BOT_ID:
+        url = "https://api.groupme.com/v3/bots/post"
+        payload = {"bot_id": SUBTOPIC_BOT_ID, "text": text}
+        try:
+            response = requests.post(url, json=payload, timeout=8)
+            response.raise_for_status()
+            last_ai_time = now
+            logger.info(f"AI message sent via SUBTOPIC_BOT_ID in subtopic: {text[:40]}...")
+            return True
+        except Exception as e:
+            logger.error(f"Subtopic bot send error: {e} (SUBTOPIC_BOT_ID={SUBTOPIC_BOT_ID})")
+            # fall through to next method
 
-    url = "https://api.groupme.com/v3/bots/post"
-    payload = {
-        "bot_id": BOT_ID,
-        "text": text,
-        "attachments": [
-            {
-                "type": "topic",
-                "topic": "clean memes chat memes"
+    # 2) If we have a user token and a subgroup id, POST to /groups/<subtopic>/messages
+    if GROUPME_ACCESS_TOKEN and SUBTOPIC_ID:
+        try:
+            source_guid = uuid.uuid4().hex
+            url = f"https://api.groupme.com/v3/groups/{SUBTOPIC_ID}/messages"
+            headers = {
+                "X-Access-Token": GROUPME_ACCESS_TOKEN,
+                "Content-Type": "application/json"
             }
-        ]
-    }
-    try:
-        response = requests.post(url, json=payload, timeout=5)
-        response.raise_for_status()
-        last_ai_time = now
-        logger.info(f"AI message sent in subtopic 'clean memes chat memes': {text[:30]}...")
-        return True
-    except Exception as e:
-        logger.error(f"GroupMe AI send error: {e}")
-        return False
+            payload = {"message": {"source_guid": source_guid, "text": text}}
+            response = requests.post(url, headers=headers, json=payload, timeout=8)
+            response.raise_for_status()
+            last_ai_time = now
+            logger.info(f"AI message posted to subgroup {SUBTOPIC_ID}: {text[:40]}...")
+            return True
+        except Exception as e:
+            logger.error(f"Subtopic user-post error: {e} (SUBTOPIC_ID={SUBTOPIC_ID})")
+            # fall through to fallback
+
+    # 3) Fallback: cannot post to subtopic because missing credentials or both methods failed
+    logger.warning("AI cannot post to subtopic: missing SUBTOPIC_BOT_ID or (GROUPME_ACCESS_TOKEN+SUBTOPIC_ID) or send failed.")
+    send_system_message("⚠️ ClankerAI: Unable to post AI reply to the subtopic. Please set SUBTOPIC_BOT_ID (preferred) or set both SUBTOPIC_ID and GROUPME_ACCESS_TOKEN.")
+    return False
 
 def ask_groq(prompt):
-    """Ask Groq (your existing function - unchanged)"""
+    """Ask Groq (unchanged except routing of final send is handled by send_ai_message)"""
     if not GROQ_API_KEY:
         return "❌ API key missing!"
         
@@ -231,7 +254,10 @@ def ask_groq(prompt):
         return "⏳ Processing... try again!"
     except requests.exceptions.HTTPError as e:
         status = e.response.status_code if hasattr(e.response, 'status_code') else "unknown"
-        error_detail = e.response.json().get('error', {}).get('message', str(e)) if hasattr(e.response, 'json') else str(e)
+        try:
+            error_detail = e.response.json().get('error', {}).get('message', str(e))
+        except Exception:
+            error_detail = str(e)
         logger.error(f"Groq HTTP {status}: {error_detail}")
         
         if status == 400:
@@ -318,24 +344,34 @@ def is_real_system_event(text_lower):
             return True
     return False
 
-def get_subtopic_from_attachments(data):
+def is_in_subtopic(incoming_data):
     """
-    Robustly check incoming message attachments for a topic/subtopic.
-    GroupMe may present a topic attachment with type 'topic' and either 'topic' or 'name' keys.
+    Decide whether an incoming message is from the configured subtopic.
+    Checks:
+      - If SUBTOPIC_ID is set, compare incoming_data['subgroup_id'] or incoming_data['group_id'] to it.
+      - If not set, returns False so we don't accidentally reply to main chat.
     """
-    attachments = data.get("attachments", []) or []
-    for att in attachments:
-        if not isinstance(att, dict):
-            continue
-        if att.get("type") == "topic":
-            # att could have 'topic' or 'name' depending on payload
-            return att.get("topic") or att.get("name") or None
-        # some payloads nest info under 'payload' or similar
-        payload = att.get("payload")
-        if isinstance(payload, dict):
-            if payload.get("type") == "topic":
-                return payload.get("topic") or payload.get("name") or None
-    return None
+    if not SUBTOPIC_ID:
+        return False
+
+    # incoming payload may include subgroup_id on messages that are in topics
+    subgroup_val = str(incoming_data.get('subgroup_id') or incoming_data.get('subgroup') or '')
+    group_val = str(incoming_data.get('group_id') or incoming_data.get('group') or '')
+
+    # direct group payload in some cases will use group_id==SUBTOPIC_ID for topic messages; handle both ways
+    if subgroup_val and subgroup_val == str(SUBTOPIC_ID):
+        return True
+    if group_val and group_val == str(SUBTOPIC_ID):
+        return True
+
+    # Some clients put the topic id inside event data
+    event = incoming_data.get('event') or {}
+    if isinstance(event, dict):
+        data = event.get('data') or {}
+        if str(data.get('subgroup_id')) == str(SUBTOPIC_ID):
+            return True
+
+    return False
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
@@ -343,7 +379,7 @@ def webhook():
         data = request.get_json()
         logger.info(f"Webhook received: {data.get('text', '')[:50]}...")
         logger.info(f"Sender type: {data.get('sender_type')}, Sender: {data.get('name')}")
-        
+
         if not data or 'text' not in data:
             return '', 200
         
@@ -354,11 +390,6 @@ def webhook():
         user_id = data.get('user_id')
         text_lower = text.lower()
         attachments = data.get("attachments", [])
-        
-        # Determine subtopic (if any)
-        subtopic = get_subtopic_from_attachments(data)
-        if subtopic:
-            logger.info(f"Message subtopic detected: {subtopic}")
         
         logger.info(f"Processing - Type: {sender_type}, Sender: {sender}, Text: {text[:50]}...")
         
@@ -406,32 +437,26 @@ def webhook():
                 logger.info(f"Violation handled for {sender}")
                 # Continue with bot logic even after violation
         
-        # --- CLANKERAI TRIGGER: ONLY ALLOWED IN subtopic 'clean memes chat memes' ---
-        # Use the same prompt extraction logic as before but gated by subtopic
+        # CLANKERAI TRIGGER - ONLY IN SUBTOPIC
         if 'clankerai' in text_lower:
-            # Extract prompt (function handles ignoring bot's own and empty prompts)
-            full_text = data['text']
-            prompt = extract_prompt(full_text, sender)
-            
-            # Only allow ClankerAI to respond if message is inside the designated subtopic
-            allowed_subtopic = "clean memes chat memes"
-            if subtopic and subtopic.lower() == allowed_subtopic:
+            # Only respond if the message is in the configured subtopic
+            if is_in_subtopic(data):
+                full_text = data['text']
+                prompt = extract_prompt(full_text, sender)
+                
                 if prompt:
-                    logger.info(f"🤖 ClankerAI triggered by {sender} in subtopic '{subtopic}': {prompt[:50]}...")
+                    logger.info(f"🤖 ClankerAI triggered by {sender} (subtopic): {prompt[:50]}...")
                     ai_prompt = f"{sender} says: {prompt}"
                     response = ask_groq(ai_prompt)
                     send_ai_message(response)
-                    logger.info(f"✅ AI response sent for {sender} in subtopic '{subtopic}'")
+                    logger.info(f"✅ AI response attempted for {sender} in subtopic")
                 else:
-                    logger.info(f"⚠️ Ignoring empty ClankerAI ping from {sender} in subtopic")
-                return '', 200
+                    logger.info(f"⚠️ Ignoring empty ClankerAI ping from {sender} (subtopic)")
             else:
-                # If clankerai used outside the allowed subtopic, politely redirect in MAIN chat
-                logger.info(f"⛔ ClankerAI attempt by {sender} outside '{allowed_subtopic}' (subtopic: {subtopic})")
-                send_message("⚠️ Use 'clankerai' in the 'clean memes chat memes' subtopic.")
-                return '', 200
+                logger.info(f"ClankerAI mention in main or non-configured topic by {sender} - ignoring (only replies in SUBTOPIC_ID)")
+            return '', 200
         
-        # OTHER USER TRIGGERS (main chat)
+        # OTHER USER TRIGGERS (main group behavior unchanged)
         if 'clean memes' in text_lower:
             send_message("We're the best!")
             logger.info(f"✅ Trigger: 'clean memes' from {sender}")
@@ -522,6 +547,11 @@ def health():
                 "removed": "Rules warning"
             }
         },
+        "subtopic_config": {
+            "subtopic_id": SUBTOPIC_ID or "NOT SET",
+            "subtopic_bot_id": SUBTOPIC_BOT_ID or "NOT SET",
+            "user_token_available": bool(GROUPME_ACCESS_TOKEN)
+        },
         "free_limit": "1M tokens/month (~20k short responses)"
     }
 
@@ -576,12 +606,14 @@ def test_system():
         return {"error": str(e)}, 500
 
 if __name__ == "__main__":
-    logger.info("🚀 Starting ClankerAI Bot with Enhanced System Message Handling")
+    logger.info("🚀 Starting ClankerAI Bot (main) with subtopic-aware AI posting")
     logger.info(f"Bot ID: {'SET' if BOT_ID else 'MISSING'}")
     logger.info(f"Bot Name: {BOT_NAME}")
     logger.info(f"Groq Key: {'SET' if GROQ_API_KEY else 'MISSING'}")
     logger.info(f"AI Cooldown: {ai_cooldown_seconds}s")
     logger.info(f"Ban System: {'ENABLED' if GROUP_ID and BAN_SERVICE_URL else 'DISABLED'}")
+    logger.info(f"Subtopic ID: {SUBTOPIC_ID or 'NOT SET'}")
+    logger.info(f"Subtopic Bot ID: {SUBTOPIC_BOT_ID or 'NOT SET'}")
     if GROUP_ID and BAN_SERVICE_URL:
         logger.info(f"  Group: {GROUP_ID}, Ban Service: {BAN_SERVICE_URL}")
     logger.info(f"Instant Ban Words: {len(INSTANT_BAN_WORDS)}")
