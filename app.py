@@ -234,7 +234,7 @@ def extract_prompt(full_text, sender):
             logger.info(f"Prompt too short from {sender} - ignoring")
             return None
         
-        logger.info(f"Extracted prompt: '{promrompt}'")
+        logger.info(f"Extracted prompt: '{prompt}'")
         return prompt
     
     return None
