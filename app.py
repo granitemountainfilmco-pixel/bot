@@ -13,9 +13,9 @@ logger = logging.getLogger(__name__)
 # Config
 BOT_ID = os.getenv("BOT_ID")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-BOT_NAME = os.getenv("BOT_NAME", "ClankerAI")  # Add your bot's display name
+BOT_NAME = os.getenv("BOT_NAME", "ClankerAI")
 
-# NEW: Moderation config (added at top)
+# NEW: Moderation config
 GROUP_ID = os.getenv("GROUP_ID")
 DELETER_URL = os.getenv("DELETER_URL")
 SWEAR_WORDS = [
@@ -34,9 +34,9 @@ SWEAR_WORDS = [
     'loraxmybabe'
 ]
 
-# NEW: Swear deletion function (added)
+# FIXED: Swear deletion function
 def forward_to_deleter(message_id, swear_word):
-    """Forward swear to OAuth deletion service."""
+    """Forward swear to deletion service."""
     if not DELETER_URL:
         logger.warning("No DELETER_URL configured - can't delete swears")
         return False
@@ -49,7 +49,7 @@ def forward_to_deleter(message_id, swear_word):
     try:
         response = requests.post(f"{DELETER_URL}/delete", json=payload, timeout=5)
         if response.status_code == 200:
-            logger.info(f"✅ Deleted {message_id} via OAuth: {swear_word}")
+            logger.info(f"✅ Deleted {message_id} via deletion service: {swear_word}")
             return True
         else:
             logger.error(f"❌ Delete failed {response.status_code}: {response.text}")
@@ -82,7 +82,7 @@ last_ai_time = 0
 ai_cooldown_seconds = 60
 
 def ask_groq(prompt):
-    """Ask Groq (fixed model deprecation)"""
+    """Ask Groq (your existing function - unchanged)"""
     if not GROQ_API_KEY:
         return "❌ API key missing!"
         
@@ -103,7 +103,7 @@ def ask_groq(prompt):
     }
     
     try:
-        logger.info(f"Sending to Grok: {prompt[:50]}...")
+        logger.info(f"Sending to Groq: {prompt[:50]}...")
         response = requests.post(url, headers=headers, json=data, timeout=10)
         response.raise_for_status()
         
@@ -160,9 +160,7 @@ def send_ai_message(text):
         logger.info(f"AI cooldown: {remaining}s remaining")
         return False
     
-    # Just send the response without "ClankerAI:" prefix
-    full_message = text  # No prefix!
-    success = send_message(full_message)
+    success = send_message(text)
     if success:
         last_ai_time = now
         logger.info("AI message sent successfully")
@@ -210,7 +208,7 @@ def webhook():
         if not data or 'text' not in data:
             return '', 200
         
-        # NEW: Check for swears FIRST (before any bot logic)
+        # CHECK FOR SWEARS FIRST (before any bot logic)
         message_id = data.get('id')
         text = data['text']
         if message_id and text:
@@ -220,31 +218,23 @@ def webhook():
                 logger.info(f"Message {message_id} deleted due to swear - skipping bot responses")
                 return '', 200
         
-        # ORIGINAL BOT LOGIC (unchanged)
+        # REST OF YOUR EXISTING BOT LOGIC (unchanged)
         text_lower = text.lower()
         sender = data.get('name', 'Someone')
         attachments = data.get("attachments", [])
         
-        # ClankerAI trigger - FIXED LOGIC
+        # ClankerAI trigger
         if 'clankerai' in text_lower:
             full_text = data['text']
             prompt = extract_prompt(full_text, sender)
             
-            # Only respond if we got a meaningful prompt AND it's not our own message
             if prompt:
                 logger.info(f"ClankerAI triggered by {sender}: {prompt[:50]}...")
-                
-                # Inject sender name into hidden AI prompt
                 ai_prompt = f"{sender} says: {prompt}"
-                
-                # Get AI response
                 response = ask_groq(ai_prompt)
-                
-                # Send WITHOUT prefix to avoid self-triggering
                 send_ai_message(response)
                 return '', 200
             else:
-                # Empty prompt - don't respond, just log
                 logger.info(f"Ignoring empty ClankerAI ping from {sender}")
                 return '', 200
         
@@ -262,7 +252,6 @@ def webhook():
         elif 'removed' in text and data.get("sender_type") == "system":
             send_message("this could be you if you break the rules, watch it. 👀")
         elif 'https:' in text:
-            # Only flag if NOT an uploaded video
             if not any(att.get("type") == "video" for att in attachments):
                 send_message("Delete this, links are not allowed, admins have been notified")
         
@@ -274,7 +263,7 @@ def webhook():
 
 @app.route('/groups', methods=['GET'])
 def groups():
-    """Get groups endpoint (unchanged from your original)"""
+    """Get groups endpoint"""
     url = "https://api.groupme.com/v3/groups"
     headers = {"X-Access-Token": os.getenv("ACCESS_TOKEN")}
     try:
@@ -286,9 +275,8 @@ def groups():
 
 @app.route('/health', methods=['GET'])
 def health():
-    """Health check endpoint - UPDATED with moderation info"""
+    """Health check endpoint"""
     try:
-        # Test Groq API quickly
         test_response = ask_groq("say hi")
         groq_status = "OK" if len(test_response) > 3 else f"ERROR: {test_response}"
     except:
@@ -302,7 +290,6 @@ def health():
         "groq_status": groq_status,
         "ai_cooldown": f"{ai_cooldown_seconds}s",
         "last_ai": time.ctime(last_ai_time) if last_ai_time else "Never",
-        # NEW: Moderation status
         "moderation": {
             "enabled": bool(GROUP_ID and DELETER_URL),
             "group_id": GROUP_ID or "MISSING",
@@ -324,7 +311,6 @@ if __name__ == "__main__":
     logger.info(f"Bot Name: {BOT_NAME}")
     logger.info(f"Groq Key: {'SET' if GROQ_API_KEY else 'MISSING'}")
     logger.info(f"AI Cooldown: {ai_cooldown_seconds}s")
-    # NEW: Moderation startup info
     logger.info(f"Moderation: {'ENABLED' if GROUP_ID and DELETER_URL else 'DISABLED'}")
     if GROUP_ID and DELETER_URL:
         logger.info(f"  Group: {GROUP_ID}, Deleter: {DELETER_URL}")
