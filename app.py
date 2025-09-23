@@ -3,6 +3,7 @@ import requests
 import os
 import time
 import logging
+import threading
 
 app = Flask(__name__)
 
@@ -74,7 +75,6 @@ def check_for_violations(text, user_id, username):
     # Instant ban
     for word in text_words:
         clean_word = word.strip('.,!?"\'()[]{}').lower()
-        # Check for instant ban words or partial matches
         for ban_word in INSTANT_BAN_WORDS:
             if ban_word in clean_word:
                 logger.info(f"🚨 INSTANT BAN: '{clean_word}' from {username}")
@@ -162,6 +162,31 @@ def is_real_system_event(text_lower):
     ]
     return any(pattern in text_lower for pattern in system_patterns)
 
+def keep_alive():
+    """Send periodic pings to keep bot and ban service awake."""
+    bot_health_url = "http://localhost:5000/health"  # Default for local; override with environment variable
+    if os.getenv("BOT_HEALTH_URL"):
+        bot_health_url = os.getenv("BOT_HEALTH_URL")
+    while True:
+        try:
+            # Ping ban service
+            if BAN_SERVICE_URL:
+                response = requests.get(f"{BAN_SERVICE_URL}/health", timeout=3)
+                logger.info(f"Keep-alive ping to ban service: {response.status_code}")
+            else:
+                logger.warning("No BAN_SERVICE_URL for keep-alive ping")
+        except Exception as e:
+            logger.error(f"Keep-alive ping to ban service failed: {e}")
+        
+        try:
+            # Ping bot itself
+            response = requests.get(bot_health_url, timeout=3)
+            logger.info(f"Keep-alive ping to bot: {response.status_code}")
+        except Exception as e:
+            logger.error(f"Keep-alive ping to bot failed: {e}")
+        
+        time.sleep(60)  # Wait 60 seconds before next ping
+
 @app.route('/webhook', methods=['POST'])
 def webhook():
     try:
@@ -245,10 +270,15 @@ def health():
         }
     }
 
+# Start keep-alive thread
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 5000))
     logger.info("🚀 Starting ClankerBot (no AI)")
     logger.info(f"Bot ID: {'SET' if BOT_ID else 'MISSING'}")
     logger.info(f"Bot Name: {BOT_NAME}")
     logger.info(f"Ban System: {'ENABLED' if GROUP_ID and BAN_SERVICE_URL else 'DISABLED'}")
+    # Start keep-alive thread
+    keep_alive_thread = threading.Thread(target=keep_alive, daemon=True)
+    keep_alive_thread.start()
+    logger.info("Started keep-alive thread for bot and ban service")
     app.run(host="0.0.0.0", port=port, debug=False)
