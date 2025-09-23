@@ -31,7 +31,6 @@ REGULAR_SWEAR_WORDS = [
     'ass', 'asshole', 'asshat',
     'cunt',
     'dick', 'dickhead',
-    'piss', 'pissed',
     'damn',
     'bastard',
     'slut',
