@@ -21,7 +21,7 @@ BAN_SERVICE_URL = os.getenv("BAN_SERVICE_URL")
 
 # Swear word categories
 INSTANT_BAN_WORDS = [
-    'nigger', 'nigga', 'n1gger', 'n1gga', 'nigg', 'n1gg', 'niger', 'niga'
+    'nigger', 'nigga', 'n1gger', 'n1gga', 'nigg', 'n1gg', 'niger'
 ]
 
 REGULAR_SWEAR_WORDS = [
