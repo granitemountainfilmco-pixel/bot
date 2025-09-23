@@ -20,7 +20,7 @@ BAN_SERVICE_URL = os.getenv("BAN_SERVICE_URL")
 
 # Swear word categories
 INSTANT_BAN_WORDS = [
-    'nigger', 'nigga', 'n1gger', 'n1gga'
+    'nigger', 'nigga', 'n1gger', 'n1gga', 'nigg', 'n1gg', 'niger', 'niga'
 ]
 
 REGULAR_SWEAR_WORDS = [
@@ -74,12 +74,14 @@ def check_for_violations(text, user_id, username):
     # Instant ban
     for word in text_words:
         clean_word = word.strip('.,!?"\'()[]{}').lower()
-        if clean_word in INSTANT_BAN_WORDS:
-            logger.info(f"🚨 INSTANT BAN: '{clean_word}' from {username}")
-            success = call_ban_service(user_id, username, f"Instant ban: {clean_word}")
-            if success:
-                send_system_message(f"🔨 {username} has been permanently banned for using prohibited language.")
-            return True
+        # Check for instant ban words or partial matches
+        for ban_word in INSTANT_BAN_WORDS:
+            if ban_word in clean_word:
+                logger.info(f"🚨 INSTANT BAN: '{clean_word}' from {username}")
+                success = call_ban_service(user_id, username, f"Instant ban: {clean_word}")
+                if success:
+                    send_system_message(f"🔨 {username} has been permanently banned for using prohibited language.")
+                return True
     
     # Regular swears
     for word in text_words:
