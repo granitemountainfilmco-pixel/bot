@@ -81,10 +81,10 @@ def get_user_id(target_alias, sender_name, original_text):
         logger.error("Missing ACCESS_TOKEN or GROUP_ID for user_id query")
         return False
     
-    # Fetch group members
+    # Fetch group details (correct endpoint includes members)
     try:
         response = requests.get(
-            f"https://api.groupme.com/v3/groups/{GROUP_ID}/members",
+            f"https://api.groupme.com/v3/groups/{GROUP_ID}",
             headers={"X-Access-Token": ACCESS_TOKEN},
             timeout=5
         )
