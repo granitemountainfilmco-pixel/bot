@@ -47,7 +47,7 @@ last_sent_time = 0
 last_system_message_time = 0
 last_user_id_query_time = 0
 cooldown_seconds = 10
-user_id_query_cooldown = 180  # 3 minutes
+user_id_query_cooldown = 60  # 3 minutes
 
 def call_ban_service(user_id, username, reason):
     if not BAN_SERVICE_URL:
