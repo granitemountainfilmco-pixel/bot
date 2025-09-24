@@ -3,7 +3,6 @@ import requests
 import os
 import time
 import logging
-import threading
 
 app = Flask(__name__)
 
@@ -45,6 +44,7 @@ user_swear_counts = {}
 
 # Cooldowns
 last_sent_time = 0
+last_system_message_time = 0
 cooldown_seconds = 10
 
 def call_ban_service(user_id, username, reason):
@@ -105,14 +105,25 @@ def check_for_violations(text, user_id, username):
     return False
 
 def send_system_message(text):
+    global last_system_message_time
     if not BOT_ID:
         logger.error("No BOT_ID configured - can't send messages")
         return False
+    
+    # Bypass cooldown for strike-related messages
+    is_strike_message = "Warning" in text or "banned" in text
+    now = time.time()
+    if not is_strike_message and now - last_system_message_time < cooldown_seconds:
+        logger.info("System message cooldown active")
+        return False
+
     url = "https://api.groupme.com/v3/bots/post"
     payload = {"bot_id": BOT_ID, "text": text}
     try:
         response = requests.post(url, json=payload, timeout=5)
         response.raise_for_status()
+        if not is_strike_message:
+            last_system_message_time = now
         logger.info(f"System message sent: {text[:30]}...")
         return True
     except Exception as e:
@@ -160,31 +171,6 @@ def is_real_system_event(text_lower):
         'added'
     ]
     return any(pattern in text_lower for pattern in system_patterns)
-
-def keep_alive():
-    """Send periodic pings to keep bot and ban service awake."""
-    bot_health_url = "http://localhost:5000/health"  # Default for local; override with environment variable
-    if os.getenv("BOT_HEALTH_URL"):
-        bot_health_url = os.getenv("BOT_HEALTH_URL")
-    while True:
-        try:
-            # Ping ban service
-            if BAN_SERVICE_URL:
-                response = requests.get(f"{BAN_SERVICE_URL}/health", timeout=3)
-                logger.info(f"Keep-alive ping to ban service: {response.status_code}")
-            else:
-                logger.warning("No BAN_SERVICE_URL for keep-alive ping")
-        except Exception as e:
-            logger.error(f"Keep-alive ping to ban service failed: {e}")
-        
-        try:
-            # Ping bot itself
-            response = requests.get(bot_health_url, timeout=3)
-            logger.info(f"Keep-alive ping to bot: {response.status_code}")
-        except Exception as e:
-            logger.error(f"Keep-alive ping to bot failed: {e}")
-        
-        time.sleep(60)  # Wait 60 seconds before next ping
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
@@ -269,15 +255,11 @@ def health():
         }
     }
 
-# Start keep-alive thread
+# Start bot
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 5000))
     logger.info("🚀 Starting ClankerBot (no AI)")
     logger.info(f"Bot ID: {'SET' if BOT_ID else 'MISSING'}")
     logger.info(f"Bot Name: {BOT_NAME}")
     logger.info(f"Ban System: {'ENABLED' if GROUP_ID and BAN_SERVICE_URL else 'DISABLED'}")
-    # Start keep-alive thread
-    keep_alive_thread = threading.Thread(target=keep_alive, daemon=True)
-    keep_alive_thread.start()
-    logger.info("Started keep-alive thread for bot and ban service")
     app.run(host="0.0.0.0", port=port, debug=False)
