@@ -3,6 +3,7 @@ import requests
 import os
 import time
 import logging
+from fuzzywuzzy import process
 
 app = Flask(__name__)
 
@@ -13,10 +14,10 @@ logger = logging.getLogger(__name__)
 # Config
 BOT_ID = os.getenv("BOT_ID")
 BOT_NAME = os.getenv("BOT_NAME", "ClankerBot")
-
-# Ban system config
 GROUP_ID = os.getenv("GROUP_ID")
 BAN_SERVICE_URL = os.getenv("BAN_SERVICE_URL")
+ADMIN_IDS = os.getenv("ADMIN_IDS", "").split(",")  # Comma-separated admin user_ids
+ACCESS_TOKEN = os.getenv("ACCESS_TOKEN")  # GroupMe API token for member list
 
 # Swear word categories
 INSTANT_BAN_WORDS = [
@@ -68,6 +69,49 @@ def call_ban_service(user_id, username, reason):
         logger.error(f"❌ Ban service error: {e}")
         return False
 
+def get_user_id(target_alias, sender_id, sender_name, original_text):
+    if sender_id not in ADMIN_IDS:
+        logger.info(f"Non-admin {sender_name} ({sender_id}) tried to query user_id")
+        return False
+    if not ACCESS_TOKEN or not GROUP_ID:
+        send_system_message(f"> @{sender_name}: {original_text}\nError: Missing ACCESS_TOKEN or GROUP_ID")
+        logger.error("Missing ACCESS_TOKEN or GROUP_ID for user_id query")
+        return False
+    
+    # Fetch group members
+    try:
+        response = requests.get(
+            f"https://api.groupme.com/v3/groups/{GROUP_ID}/members",
+            headers={"X-Access-Token": ACCESS_TOKEN},
+            timeout=5
+        )
+        response.raise_for_status()
+        members = response.json().get("response", {}).get("members", [])
+        if not members:
+            send_system_message(f"> @{sender_name}: {original_text}\nError: No members found")
+            return False
+        
+        # Fuzzy match the alias
+        aliases = [member["nickname"] for member in members]
+        best_match = process.extractOne(target_alias.lower(), [a.lower() for a in aliases], score_cutoff=80)
+        if not best_match:
+            send_system_message(f"> @{sender_name}: {original_text}\nNo user found matching '{target_alias}'")
+            return False
+        
+        # Find user_id for best match
+        for member in members:
+            if member["nickname"].lower() == best_match[0].lower():
+                user_id = member["user_id"]
+                send_system_message(f"> @{sender_name}: {original_text}\n{member['nickname']}'s user_id is {user_id}")
+                return True
+        
+        send_system_message(f"> @{sender_name}: {original_text}\nError: Could not retrieve user_id")
+        return False
+    except Exception as e:
+        logger.error(f"User ID query error: {e}")
+        send_system_message(f"> @{sender_name}: {original_text}\nError: Failed to fetch user_id")
+        return False
+
 def check_for_violations(text, user_id, username):
     text_lower = text.lower()
     text_words = text_lower.split()
@@ -100,7 +144,7 @@ def check_for_violations(text, user_id, username):
                 return True
             else:
                 remaining = 10 - current_count
-                send_system_message(f"⚠️ {username} - Warning {current_count}/10 for inappropriate language. {remaining} more and you're banned!")
+                send_system_message(f"⚠️ {username} ({user_id}) - Warning {current_count}/10 for inappropriate language. {remaining} more and you're banned!")
             break
     return False
 
@@ -198,6 +242,15 @@ def webhook():
         
         # Skip non-user messages
         if sender_type not in ['user']:
+            return '', 200
+        
+        # Admin user_id query
+        if text_lower.startswith('!userid ') or 'what is' in text_lower and 'user id' in text_lower:
+            target_alias = text_lower.replace('!userid ', '').strip()
+            if 'what is' in text_lower:
+                target_alias = text_lower.split('user id')[0].replace('what is', '').strip()
+            if target_alias:
+                get_user_id(target_alias, user_id, sender, text)
             return '', 200
         
         # Ban checks
