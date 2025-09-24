@@ -1,3 +1,5 @@
 flask
 requests
 gunicorn
+fuzzywuzzy
+python-Levenshtein
