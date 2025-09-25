@@ -17,7 +17,13 @@ BOT_NAME = os.getenv("BOT_NAME", "ClankerBot")
 GROUP_ID = os.getenv("GROUP_ID")
 BAN_SERVICE_URL = os.getenv("BAN_SERVICE_URL")
 ACCESS_TOKEN = os.getenv("ACCESS_TOKEN")  # GroupMe API token for member list
-ADMIN_IDS = os.getenv("ADMIN_IDS", "119189324").split(",")  # Default to user ID 119189324
+ADMIN_IDS = [
+    '119189324', '82717917', '124068433', '103258964', '123259855',
+    '114848297', '121920211', '134245360', '113819798', '130463543',
+    '123142410', '131010920', '133136781', '124453541', '122782552',
+    '117776217', '85166615', '114066399', '84254355', '115866991',
+    '125629030'
+]
 
 # Swear word categories
 INSTANT_BAN_WORDS = [
