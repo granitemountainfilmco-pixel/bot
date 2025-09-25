@@ -17,10 +17,11 @@ BOT_NAME = os.getenv("BOT_NAME", "ClankerBot")
 GROUP_ID = os.getenv("GROUP_ID")
 BAN_SERVICE_URL = os.getenv("BAN_SERVICE_URL")
 ACCESS_TOKEN = os.getenv("ACCESS_TOKEN")  # GroupMe API token for member list
+ADMIN_IDS = os.getenv("ADMIN_IDS", "119189324").split(",")  # Default to user ID 119189324
 
 # Swear word categories
 INSTANT_BAN_WORDS = [
-    'nigger', 'nigga', 'n1gger', 'n1gga', 'nigg', 'n1gg', 'niger', 'niga'
+    'nigger', 'nigga', 'n1gger', 'n1gga', 'nigg', 'n1gg'
 ]
 
 REGULAR_SWEAR_WORDS = [
@@ -45,9 +46,7 @@ user_swear_counts = {}
 # Cooldowns
 last_sent_time = 0
 last_system_message_time = 0
-last_user_id_query_time = 0
 cooldown_seconds = 10
-user_id_query_cooldown = 60  # 3 minutes
 
 def call_ban_service(user_id, username, reason):
     if not BAN_SERVICE_URL:
@@ -70,11 +69,9 @@ def call_ban_service(user_id, username, reason):
         logger.error(f"❌ Ban service error: {e}")
         return False
 
-def get_user_id(target_alias, sender_name, original_text):
-    global last_user_id_query_time
-    now = time.time()
-    if now - last_user_id_query_time < user_id_query_cooldown:
-        logger.info("User ID query cooldown active")
+def get_user_id(target_alias, sender_name, sender_id, original_text):
+    if sender_id not in ADMIN_IDS:
+        send_system_message(f"> @{sender_name}: {original_text}\nError: Only admins can use this command")
         return False
     if not ACCESS_TOKEN or not GROUP_ID:
         send_system_message(f"> @{sender_name}: {original_text}\nError: Missing ACCESS_TOKEN or GROUP_ID")
@@ -106,7 +103,6 @@ def get_user_id(target_alias, sender_name, original_text):
             if member["nickname"].lower() == best_match[0].lower():
                 user_id = member["user_id"]
                 send_system_message(f"> @{sender_name}: {original_text}\n{member['nickname']}'s user_id is {user_id}")
-                last_user_id_query_time = now
                 return True
         
         send_system_message(f"> @{sender_name}: {original_text}\nError: Could not retrieve user_id")
@@ -254,7 +250,7 @@ def webhook():
             if 'what is' in text_lower:
                 target_alias = text_lower.split('user id')[0].replace('what is', '').strip()
             if target_alias:
-                get_user_id(target_alias, sender, text)
+                get_user_id(target_alias, sender, user_id, text)
             return '', 200
         
         # Ban checks
