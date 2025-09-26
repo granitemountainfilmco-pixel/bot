@@ -46,8 +46,9 @@ REGULAR_SWEAR_WORDS = [
     'loraxmybabe'
 ]
 
-# Track user swear counts (in memory)
+# Track user swear counts and banned users (in memory)
 user_swear_counts = {}
+banned_users = {}  # Format: {user_id: username}
 
 # Cooldowns
 last_sent_time = 0
@@ -67,6 +68,7 @@ def call_ban_service(user_id, username, reason):
         response = requests.post(f"{BAN_SERVICE_URL}/ban", json=payload, timeout=5)
         if response.status_code == 200:
             logger.info(f"✅ Banned {username} ({user_id}): {reason}")
+            banned_users[user_id] = username  # Store banned user in memory
             return True
         else:
             logger.error(f"❌ Ban failed {response.status_code}: {response.text}")
@@ -84,7 +86,6 @@ def get_user_id(target_alias, sender_name, sender_id, original_text):
         logger.error("Missing ACCESS_TOKEN or GROUP_ID for user_id query")
         return False
     
-    # Fetch group details (correct endpoint includes members)
     try:
         response = requests.get(
             f"https://api.groupme.com/v3/groups/{GROUP_ID}",
@@ -97,14 +98,12 @@ def get_user_id(target_alias, sender_name, sender_id, original_text):
             send_system_message(f"> @{sender_name}: {original_text}\nError: No members found")
             return False
         
-        # Fuzzy match the alias
         aliases = [member["nickname"] for member in members]
         best_match = process.extractOne(target_alias.lower(), [a.lower() for a in aliases], score_cutoff=80)
         if not best_match:
             send_system_message(f"> @{sender_name}: {original_text}\nNo user found matching '{target_alias}'")
             return False
         
-        # Find user_id for best match
         for member in members:
             if member["nickname"].lower() == best_match[0].lower():
                 user_id = member["user_id"]
@@ -118,11 +117,68 @@ def get_user_id(target_alias, sender_name, sender_id, original_text):
         send_system_message(f"> @{sender_name}: {original_text}\nError: Failed to fetch user_id")
         return False
 
+def unban_user(target_alias, sender_name, sender_id, original_text):
+    if sender_id not in ADMIN_IDS:
+        send_system_message(f"> @{sender_name}: {original_text}\nError: Only admins can use this command")
+        return False
+    if not ACCESS_TOKEN or not GROUP_ID:
+        send_system_message(f"> @{sender_name}: {original_text}\nError: Missing ACCESS_TOKEN or GROUP_ID")
+        logger.error("Missing ACCESS_TOKEN or GROUP_ID for unban")
+        return False
+    
+    # Fuzzy match the username in banned_users
+    banned_usernames = [username for username in banned_users.values()]
+    if not banned_usernames:
+        send_system_message(f"> @{sender_name}: {original_text}\nError: No users have been banned by ClankerBot")
+        return False
+    
+    best_match = process.extractOne(target_alias.lower(), [name.lower() for name in banned_usernames], score_cutoff=80)
+    if not best_match:
+        send_system_message(f"> @{sender_name}: {original_text}\nError: No banned user found matching '{target_alias}'")
+        return False
+    
+    # Find user_id for best match
+    target_user_id = None
+    for user_id, username in banned_users.items():
+        if username.lower() == best_match[0].lower():
+            target_user_id = user_id
+            target_username = username
+            break
+    
+    if not target_user_id:
+        send_system_message(f"> @{sender_name}: {original_text}\nError: Could not find user_id for '{target_alias}'")
+        return False
+    
+    # Re-add user to the group using GroupMe API
+    url = f"https://api.groupme.com/v3/groups/{GROUP_ID}/members/add"
+    payload = {
+        "members": [{
+            "user_id": target_user_id,
+            "nickname": target_username
+        }]
+    }
+    headers = {"X-Access-Token": ACCESS_TOKEN}
+    
+    try:
+        response = requests.post(url, json=payload, headers=headers, timeout=5)
+        response.raise_for_status()
+        logger.info(f"✅ Unbanned {target_username} ({target_user_id})")
+        send_system_message(f"> @{sender_name}: {original_text}\n✅ {target_username} has been unbanned and re-added to the group")
+        del banned_users[target_user_id]  # Remove from banned_users
+        return True
+    except requests.exceptions.HTTPError as e:
+        logger.error(f"❌ Unban failed {response.status_code}: {response.text}")
+        send_system_message(f"> @{sender_name}: {original_text}\nError: Failed to unban '{target_username}' - {response.text}")
+        return False
+    except Exception as e:
+        logger.error(f"❌ Unban error: {e}")
+        send_system_message(f"> @{sender_name}: {original_text}\nError: Failed to unban '{target_username}'")
+        return False
+
 def check_for_violations(text, user_id, username):
     text_lower = text.lower()
     text_words = text_lower.split()
     
-    # Instant ban
     for word in text_words:
         clean_word = word.strip('.,!?"\'()[]{}').lower()
         if clean_word in INSTANT_BAN_WORDS:
@@ -132,7 +188,6 @@ def check_for_violations(text, user_id, username):
                 send_system_message(f"🔨 {username} has been permanently banned for using prohibited language.")
             return True
     
-    # Regular swears
     for word in text_words:
         clean_word = word.strip('.,!?"\'()[]{}').lower()
         if clean_word in REGULAR_SWEAR_WORDS:
@@ -160,7 +215,6 @@ def send_system_message(text):
         logger.error("No BOT_ID configured - can't send messages")
         return False
     
-    # Bypass cooldown for strike-related messages
     is_strike_message = "Warning" in text or "banned" in text
     now = time.time()
     if not is_strike_message and now - last_system_message_time < cooldown_seconds:
@@ -250,6 +304,13 @@ def webhook():
         if sender_type not in ['user']:
             return '', 200
         
+        # Unban command
+        if text_lower.startswith('!unban '):
+            target_alias = text_lower.replace('!unban ', '').strip()
+            if target_alias:
+                unban_user(target_alias, sender, user_id, text)
+            return '', 200
+        
         # User ID query
         if text_lower.startswith('!userid ') or 'what is' in text_lower and 'user id' in text_lower:
             target_alias = text_lower.replace('!userid ', '').strip()
@@ -305,7 +366,8 @@ def health():
             "ban_service_url": BAN_SERVICE_URL or "MISSING",
             "instant_ban_words": len(INSTANT_BAN_WORDS),
             "regular_swear_words": len(REGULAR_SWEAR_WORDS),
-            "tracked_users": len(user_swear_counts)
+            "tracked_users": len(user_swear_counts),
+            "banned_users": len(banned_users)
         },
         "system_triggers": {
             "left": "GAY",
