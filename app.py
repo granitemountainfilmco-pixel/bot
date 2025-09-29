@@ -122,56 +122,52 @@ def unban_user(target_alias, sender_name, sender_id, original_text):
         return False
     if not ACCESS_TOKEN or not GROUP_ID:
         send_system_message(f"> @{sender_name}: {original_text}\nError: Missing ACCESS_TOKEN or GROUP_ID")
-        logger.error("Missing ACCESS_TOKEN or GROUP_ID for unban")
         return False
-    
-    # Fuzzy match the username in banned_users
-    banned_usernames = [username for username in banned_users.values()]
-    if not banned_usernames:
-        send_system_message(f"> @{sender_name}: {original_text}\nError: No users have been banned by ClankerBot")
-        return False
-    
-    best_match = process.extractOne(target_alias.lower(), [name.lower() for name in banned_usernames], score_cutoff=80)
-    if not best_match:
-        send_system_message(f"> @{sender_name}: {original_text}\nError: No banned user found matching '{target_alias}'")
-        return False
-    
-    # Find user_id for best match
-    target_user_id = None
-    for user_id, username in banned_users.items():
-        if username.lower() == best_match[0].lower():
-            target_user_id = user_id
-            target_username = username
-            break
-    
-    if not target_user_id:
-        send_system_message(f"> @{sender_name}: {original_text}\nError: Could not find user_id for '{target_alias}'")
-        return False
-    
-    # Re-add user to the group using GroupMe API
-    url = f"https://api.groupme.com/v3/groups/{GROUP_ID}/members/add"
-    payload = {
-        "members": [{
-            "user_id": target_user_id,
-            "nickname": target_username
-        }]
-    }
-    headers = {"X-Access-Token": ACCESS_TOKEN}
-    
+
     try:
-        response = requests.post(url, json=payload, headers=headers, timeout=5)
+        # Pull full group info, including past members
+        response = requests.get(
+            f"https://api.groupme.com/v3/groups/{GROUP_ID}?per_page=200",
+            headers={"X-Access-Token": ACCESS_TOKEN},
+            timeout=5
+        )
         response.raise_for_status()
+        group_data = response.json().get("response", {})
+        members = group_data.get("members", []) + group_data.get("memberships", [])
+
+        aliases = [m.get("nickname", "") for m in members if m.get("nickname")]
+        best_match = process.extractOne(target_alias.lower(), [a.lower() for a in aliases], score_cutoff=80)
+        if not best_match:
+            send_system_message(f"> @{sender_name}: {original_text}\nError: No banned/removed user found matching '{target_alias}'")
+            return False
+
+        # Find matching member
+        target_user_id, target_username = None, None
+        for m in members:
+            if m.get("nickname", "").lower() == best_match[0].lower():
+                target_user_id = m.get("user_id")
+                target_username = m.get("nickname")
+                break
+
+        if not target_user_id:
+            send_system_message(f"> @{sender_name}: {original_text}\nError: Could not resolve user_id for '{target_alias}'")
+            return False
+
+        # Attempt to re-add them
+        url = f"https://api.groupme.com/v3/groups/{GROUP_ID}/members/add"
+        payload = {"members": [{"user_id": target_user_id, "nickname": target_username}]}
+        headers = {"X-Access-Token": ACCESS_TOKEN}
+
+        add_response = requests.post(url, json=payload, headers=headers, timeout=5)
+        add_response.raise_for_status()
         logger.info(f"✅ Unbanned {target_username} ({target_user_id})")
         send_system_message(f"> @{sender_name}: {original_text}\n✅ {target_username} has been unbanned and re-added to the group")
-        del banned_users[target_user_id]  # Remove from banned_users
+        banned_users.pop(target_user_id, None)  # remove from our local dict if present
         return True
-    except requests.exceptions.HTTPError as e:
-        logger.error(f"❌ Unban failed {response.status_code}: {response.text}")
-        send_system_message(f"> @{sender_name}: {original_text}\nError: Failed to unban '{target_username}' - {response.text}")
-        return False
+
     except Exception as e:
         logger.error(f"❌ Unban error: {e}")
-        send_system_message(f"> @{sender_name}: {original_text}\nError: Failed to unban '{target_username}'")
+        send_system_message(f"> @{sender_name}: {original_text}\nError: Failed to unban '{target_alias}'")
         return False
 
 def check_for_violations(text, user_id, username):
