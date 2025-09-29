@@ -42,6 +42,7 @@ REGULAR_SWEAR_WORDS = [
     'slut',
     'whore',
     'retard',
+    'wtf',
     'nevergonnagiveyouupnevergonnaletyoudown'
 ]
 
