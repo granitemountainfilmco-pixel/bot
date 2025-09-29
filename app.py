@@ -47,7 +47,8 @@ REGULAR_SWEAR_WORDS = [
 
 # Track user swear counts and banned users (in memory)
 user_swear_counts = {}
-banned_users = {}  # Format: {user_id: username}
+banned_users = {}     # {user_id: username}
+former_members = {}   # {user_id: username} - for anyone removed/left
 
 # Cooldowns
 last_sent_time = 0
@@ -67,7 +68,7 @@ def call_ban_service(user_id, username, reason):
         response = requests.post(f"{BAN_SERVICE_URL}/ban", json=payload, timeout=5)
         if response.status_code == 200:
             logger.info(f"✅ Banned {username} ({user_id}): {reason}")
-            banned_users[user_id] = username  # Store banned user in memory
+            banned_users[user_id] = username
             return True
         else:
             logger.error(f"❌ Ban failed {response.status_code}: {response.text}")
@@ -122,48 +123,57 @@ def unban_user(target_alias, sender_name, sender_id, original_text):
         return False
     if not ACCESS_TOKEN or not GROUP_ID:
         send_system_message(f"> @{sender_name}: {original_text}\nError: Missing ACCESS_TOKEN or GROUP_ID")
+        logger.error("Missing ACCESS_TOKEN or GROUP_ID for unban")
         return False
 
+    # Collect candidates from both banned_users and former_members
+    candidates = {}
+    for uid, uname in banned_users.items():
+        candidates[uname.lower()] = (uid, uname)
+    for uid, uname in former_members.items():
+        candidates[uname.lower()] = (uid, uname)
+
+    if not candidates:
+        send_system_message(f"> @{sender_name}: {original_text}\nError: No known banned or removed users to unban")
+        return False
+
+    best_match = process.extractOne(target_alias.lower(), list(candidates.keys()), score_cutoff=70)
+    if not best_match:
+        send_system_message(f"> @{sender_name}: {original_text}\nError: No banned/removed user found matching '{target_alias}'")
+        return False
+
+    target_user_id, target_username = candidates[best_match[0]]
+
+    # Re-add user
+    url = f"https://api.groupme.com/v3/groups/{GROUP_ID}/members/add"
+    payload = {"members": [{"user_id": target_user_id, "nickname": target_username}]}
+    headers = {"X-Access-Token": ACCESS_TOKEN}
+
     try:
-        # Pull full group info, including past members
-        response = requests.get(
-            f"https://api.groupme.com/v3/groups/{GROUP_ID}?per_page=200",
-            headers={"X-Access-Token": ACCESS_TOKEN},
-            timeout=5
-        )
+        response = requests.post(url, json=payload, headers=headers, timeout=5)
         response.raise_for_status()
-        group_data = response.json().get("response", {})
-        members = group_data.get("members", []) + group_data.get("memberships", [])
-
-        aliases = [m.get("nickname", "") for m in members if m.get("nickname")]
-        best_match = process.extractOne(target_alias.lower(), [a.lower() for a in aliases], score_cutoff=80)
-        if not best_match:
-            send_system_message(f"> @{sender_name}: {original_text}\nError: No banned/removed user found matching '{target_alias}'")
+        res_data = response.json().get("response", {})
+        results_id = res_data.get("results_id")
+        if not results_id:
+            send_system_message(f"> @{sender_name}: {original_text}\nError: Could not start unban for {target_username}")
             return False
 
-        # Find matching member
-        target_user_id, target_username = None, None
-        for m in members:
-            if m.get("nickname", "").lower() == best_match[0].lower():
-                target_user_id = m.get("user_id")
-                target_username = m.get("nickname")
-                break
+        # Poll results endpoint
+        results_url = f"https://api.groupme.com/v3/groups/{GROUP_ID}/members/results/{results_id}"
+        for _ in range(6):
+            r = requests.get(results_url, headers=headers, timeout=5)
+            r.raise_for_status()
+            res = r.json().get("response", {})
+            if res.get("status") in ["success", "complete"]:
+                logger.info(f"✅ Unbanned {target_username} ({target_user_id})")
+                send_system_message(f"> @{sender_name}: {original_text}\n✅ {target_username} has been unbanned and re-added to the group")
+                banned_users.pop(target_user_id, None)
+                former_members.pop(target_user_id, None)
+                return True
+            time.sleep(1)
 
-        if not target_user_id:
-            send_system_message(f"> @{sender_name}: {original_text}\nError: Could not resolve user_id for '{target_alias}'")
-            return False
-
-        # Attempt to re-add them
-        url = f"https://api.groupme.com/v3/groups/{GROUP_ID}/members/add"
-        payload = {"members": [{"user_id": target_user_id, "nickname": target_username}]}
-        headers = {"X-Access-Token": ACCESS_TOKEN}
-
-        add_response = requests.post(url, json=payload, headers=headers, timeout=5)
-        add_response.raise_for_status()
-        logger.info(f"✅ Unbanned {target_username} ({target_user_id})")
-        send_system_message(f"> @{sender_name}: {original_text}\n✅ {target_username} has been unbanned and re-added to the group")
-        banned_users.pop(target_user_id, None)  # remove from our local dict if present
-        return True
+        send_system_message(f"> @{sender_name}: {original_text}\nError: Timed out confirming unban for {target_username}")
+        return False
 
     except Exception as e:
         logger.error(f"❌ Unban error: {e}")
@@ -288,10 +298,12 @@ def webhook():
         if sender_type == "system" or is_system_message(data):
             if is_real_system_event(text_lower):
                 if 'has left the group' in text_lower:
+                    former_members[user_id or f"ghost-{sender}"] = sender
                     send_system_message("GAY")
                 elif 'has joined the group' in text_lower:
                     send_system_message("Welcome to Clean Memes, check the rules and announcement topics before chatting!")
                 elif 'was removed from the group' in text_lower or 'removed' in text_lower:
+                    former_members[user_id or f"ghost-{sender}"] = sender
                     send_system_message("this could be you if you break the rules, watch it. 👀")
             return '', 200
         
@@ -362,7 +374,8 @@ def health():
             "instant_ban_words": len(INSTANT_BAN_WORDS),
             "regular_swear_words": len(REGULAR_SWEAR_WORDS),
             "tracked_users": len(user_swear_counts),
-            "banned_users": len(banned_users)
+            "banned_users": len(banned_users),
+            "former_members": len(former_members)
         },
         "system_triggers": {
             "left": "GAY",
