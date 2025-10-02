@@ -182,6 +182,51 @@ def unban_user(target_alias, sender_name, sender_id, original_text):
         send_system_message(f"> @{sender_name}: {original_text}\nError: Failed to unban '{target_alias}'")
         return False
 
+def ban_user(target_alias, sender_name, sender_id, original_text):
+    if sender_id not in ADMIN_IDS:
+        send_system_message(f"> @{sender_name}: {original_text}\nError: Only admins can use this command")
+        return False
+    if not ACCESS_TOKEN or not GROUP_ID:
+        send_system_message(f"> @{sender_name}: {original_text}\nError: Missing ACCESS_TOKEN or GROUP_ID")
+        logger.error("Missing ACCESS_TOKEN or GROUP_ID for ban")
+        return False
+
+    try:
+        response = requests.get(
+            f"https://api.groupme.com/v3/groups/{GROUP_ID}",
+            headers={"X-Access-Token": ACCESS_TOKEN},
+            timeout=5
+        )
+        response.raise_for_status()
+        members = response.json().get("response", {}).get("members", [])
+        if not members:
+            send_system_message(f"> @{sender_name}: {original_text}\nError: No members found")
+            return False
+
+        aliases = [member["nickname"] for member in members]
+        best_match = process.extractOne(target_alias.lower(), [a.lower() for a in aliases], score_cutoff=80)
+        if not best_match:
+            send_system_message(f"> @{sender_name}: {original_text}\nNo user found matching '{target_alias}'")
+            return False
+
+        for member in members:
+            if member["nickname"].lower() == best_match[0].lower():
+                target_user_id = member["user_id"]
+                target_username = member["nickname"]
+                success = call_ban_service(target_user_id, target_username, "Admin ban command")
+                if success:
+                    send_system_message(f"> @{sender_name}: {original_text}\n🔨 {target_username} has been permanently banned by admin command.")
+                else:
+                    send_system_message(f"> @{sender_name}: {original_text}\nError: Failed to ban {target_username}")
+                return success
+
+        send_system_message(f"> @{sender_name}: {original_text}\nError: Could not retrieve user for banning")
+        return False
+    except Exception as e:
+        logger.error(f"Ban command error: {e}")
+        send_system_message(f"> @{sender_name}: {original_text}\nError: Failed to ban '{target_alias}'")
+        return False
+
 def check_for_violations(text, user_id, username):
     text_lower = text.lower()
     text_words = text_lower.split()
@@ -318,6 +363,13 @@ def webhook():
             target_alias = text_lower.replace('!unban ', '').strip()
             if target_alias:
                 unban_user(target_alias, sender, user_id, text)
+            return '', 200
+        
+        # Ban command
+        if text_lower.startswith('!ban '):
+            target_alias = text_lower.replace('!ban ', '').strip()
+            if target_alias:
+                ban_user(target_alias, sender, user_id, text)
             return '', 200
         
         # User ID query
