@@ -43,7 +43,8 @@ REGULAR_SWEAR_WORDS = [
     'whore',
     'retard',
     'wtf',
-    'nevergonnagiveyouupnevergonnaletyoudown'
+    'nevergonnagiveyouupnevergonnaletyoudown',
+    '67'
 ]
 
 # Track user swear counts and banned users (in memory)
