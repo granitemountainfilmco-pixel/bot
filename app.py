@@ -50,14 +50,58 @@ REGULAR_SWEAR_WORDS = [
 # Track user swear counts and banned users (in memory)
 user_swear_counts = {}
 banned_users = {}     # {user_id: username}
-former_members = {}   # {user_id: username} - for anyone removed/left
+former_members = {}   # {user_id: username} - for anyone removed/left/banned
+
+# Member cache to remember recent user_id <-> nickname pairs
+member_cache = {}     # nickname.lower() -> user_id
+id_to_name = {}       # user_id -> nickname
 
 # Cooldowns
 last_sent_time = 0
 last_system_message_time = 0
 cooldown_seconds = 10
 
+# -----------------------
+# Member cache utilities
+# -----------------------
+
+def refresh_member_cache():
+    """Fetch current group members and refresh the local cache."""
+    if not ACCESS_TOKEN or not GROUP_ID:
+        return
+    try:
+        r = requests.get(
+            f"https://api.groupme.com/v3/groups/{GROUP_ID}",
+            headers={"X-Access-Token": ACCESS_TOKEN},
+            timeout=5
+        )
+        r.raise_for_status()
+        members = r.json().get("response", {}).get("members", [])
+        for m in members:
+            nick = m.get("nickname")
+            uid = m.get("user_id")
+            if nick and uid:
+                member_cache[nick.lower()] = uid
+                id_to_name[uid] = nick
+    except Exception as e:
+        logger.debug(f"refresh_member_cache failed: {e}")
+
+def remember_member(nickname, user_id):
+    """Remember a member from an incoming message (helps recover IDs on leave)."""
+    if not nickname or not user_id:
+        return
+    try:
+        member_cache[nickname.lower()] = user_id
+        id_to_name[user_id] = nickname
+    except Exception:
+        pass
+
+# -----------------------
+# Ban service + lookups
+# -----------------------
+
 def call_ban_service(user_id, username, reason):
+    """Call external ban service and record locally for unban recovery."""
     if not BAN_SERVICE_URL:
         logger.warning("No BAN_SERVICE_URL configured - can't ban users")
         return False
@@ -71,6 +115,8 @@ def call_ban_service(user_id, username, reason):
         if response.status_code == 200:
             logger.info(f"✅ Banned {username} ({user_id}): {reason}")
             banned_users[user_id] = username
+            # Keep a recoverable record so !unban can find them by user_id or nickname
+            former_members[user_id] = username
             return True
         else:
             logger.error(f"❌ Ban failed {response.status_code}: {response.text}")
@@ -80,6 +126,7 @@ def call_ban_service(user_id, username, reason):
         return False
 
 def get_user_id(target_alias, sender_name, sender_id, original_text):
+    """Admin-only helper that publishes the resolved user_id (uses fuzzy match on live group members)."""
     if sender_id not in ADMIN_IDS:
         send_system_message(f"> @{sender_name}: {original_text}\nError: Only admins can use this command")
         return False
@@ -87,39 +134,31 @@ def get_user_id(target_alias, sender_name, sender_id, original_text):
         send_system_message(f"> @{sender_name}: {original_text}\nError: Missing ACCESS_TOKEN or GROUP_ID")
         logger.error("Missing ACCESS_TOKEN or GROUP_ID for user_id query")
         return False
-    
-    try:
-        response = requests.get(
-            f"https://api.groupme.com/v3/groups/{GROUP_ID}",
-            headers={"X-Access-Token": ACCESS_TOKEN},
-            timeout=5
-        )
-        response.raise_for_status()
-        members = response.json().get("response", {}).get("members", [])
-        if not members:
-            send_system_message(f"> @{sender_name}: {original_text}\nError: No members found")
-            return False
-        
-        aliases = [member["nickname"] for member in members]
-        best_match = process.extractOne(target_alias.lower(), [a.lower() for a in aliases], score_cutoff=80)
-        if not best_match:
-            send_system_message(f"> @{sender_name}: {original_text}\nNo user found matching '{target_alias}'")
-            return False
-        
-        for member in members:
-            if member["nickname"].lower() == best_match[0].lower():
-                user_id = member["user_id"]
-                send_system_message(f"> @{sender_name}: {original_text}\n{member['nickname']}'s user_id is {user_id}")
-                return True
-        
-        send_system_message(f"> @{sender_name}: {original_text}\nError: Could not retrieve user_id")
-        return False
-    except Exception as e:
-        logger.error(f"User ID query error: {e}")
-        send_system_message(f"> @{sender_name}: {original_text}\nError: Failed to fetch user_id")
+
+    # Refresh cache and try to resolve
+    refresh_member_cache()
+    if not member_cache:
+        send_system_message(f"> @{sender_name}: {original_text}\nError: No members found")
         return False
 
+    aliases = list(member_cache.keys())  # lowercase nicknames
+    best_match = process.extractOne(target_alias.lower(), aliases, score_cutoff=80)
+    if not best_match:
+        send_system_message(f"> @{sender_name}: {original_text}\nNo user found matching '{target_alias}'")
+        return False
+
+    matched_nick = best_match[0]
+    user_id = member_cache.get(matched_nick)
+    real_name = id_to_name.get(user_id, matched_nick)
+    if user_id:
+        send_system_message(f"> @{sender_name}: {original_text}\n{real_name}'s user_id is {user_id}")
+        return True
+
+    send_system_message(f"> @{sender_name}: {original_text}\nError: Could not retrieve user_id")
+    return False
+
 def unban_user(target_alias, sender_name, sender_id, original_text):
+    """Unban a user by fuzzy nickname or by user_id (admin-only)."""
     if sender_id not in ADMIN_IDS:
         send_system_message(f"> @{sender_name}: {original_text}\nError: Only admins can use this command")
         return False
@@ -128,59 +167,92 @@ def unban_user(target_alias, sender_name, sender_id, original_text):
         logger.error("Missing ACCESS_TOKEN or GROUP_ID for unban")
         return False
 
-    # Collect candidates from both banned_users and former_members
+    # Build candidate map: nickname.lower() -> (uid, uname) and uid string -> (uid, uname)
     candidates = {}
     for uid, uname in banned_users.items():
-        candidates[uname.lower()] = (uid, uname)
+        if uname:
+            candidates[uname.lower()] = (uid, uname)
+        candidates[str(uid)] = (uid, uname)
     for uid, uname in former_members.items():
-        candidates[uname.lower()] = (uid, uname)
+        if uname:
+            candidates[uname.lower()] = (uid, uname)
+        candidates[str(uid)] = (uid, uname)
 
     if not candidates:
         send_system_message(f"> @{sender_name}: {original_text}\nError: No known banned or removed users to unban")
         return False
 
-    best_match = process.extractOne(target_alias.lower(), list(candidates.keys()), score_cutoff=70)
-    if not best_match:
-        send_system_message(f"> @{sender_name}: {original_text}\nError: No banned/removed user found matching '{target_alias}'")
-        return False
+    lookup_key = target_alias.strip()
+    # Direct exact match (user typed a user_id or exact lowercase nickname)
+    key_lower = lookup_key.lower()
+    if key_lower in candidates:
+        target_user_id, target_username = candidates[key_lower]
+    elif lookup_key in candidates:  # check raw (for user_id strings)
+        target_user_id, target_username = candidates[lookup_key]
+    else:
+        # Fuzzy-match only against the nickname keys (avoid matching numeric IDs fuzzily)
+        nickname_keys = [k for k in candidates.keys() if not k.isdigit()]
+        if not nickname_keys:
+            send_system_message(f"> @{sender_name}: {original_text}\nError: No nickname records to match against.")
+            return False
+        best = process.extractOne(key_lower, nickname_keys)
+        if not best or best[1] < 70:
+            send_system_message(f"> @{sender_name}: {original_text}\nError: No banned/removed user found matching '{target_alias}'")
+            return False
+        matched_nick = best[0]
+        target_user_id, target_username = candidates[matched_nick]
 
-    target_user_id, target_username = candidates[best_match[0]]
-
-    # Re-add user
+    # Re-add user via GroupMe API
     url = f"https://api.groupme.com/v3/groups/{GROUP_ID}/members/add"
     payload = {"members": [{"user_id": target_user_id, "nickname": target_username}]}
     headers = {"X-Access-Token": ACCESS_TOKEN}
 
     try:
         response = requests.post(url, json=payload, headers=headers, timeout=5)
+        # Accept both 200 and 202/201 depending on API behavior; check for results_id
         response.raise_for_status()
-        res_data = response.json().get("response", {})
+        res_data = response.json().get("response", {}) if response.text else {}
         results_id = res_data.get("results_id")
-        if not results_id:
-            send_system_message(f"> @{sender_name}: {original_text}\nError: Could not start unban for {target_username}")
+        # If there is a results_id, poll it; otherwise consider the add immediate
+        if results_id:
+            results_url = f"https://api.groupme.com/v3/groups/{GROUP_ID}/members/results/{results_id}"
+            for _ in range(6):
+                r = requests.get(results_url, headers=headers, timeout=5)
+                r.raise_for_status()
+                res = r.json().get("response", {})
+                # either explicit status or member-level statuses
+                if res.get("status") in ["success", "complete"]:
+                    logger.info(f"✅ Unbanned {target_username} ({target_user_id})")
+                    send_system_message(f"> @{sender_name}: {original_text}\n✅ {target_username} has been unbanned and re-added to the group")
+                    banned_users.pop(target_user_id, None)
+                    former_members.pop(target_user_id, None)
+                    return True
+                members_status = res.get("members", [])
+                if any(m.get("status") in ["added", "success"] for m in members_status):
+                    logger.info(f"✅ Unbanned (member-status) {target_username} ({target_user_id})")
+                    send_system_message(f"> @{sender_name}: {original_text}\n✅ {target_username} has been unbanned and re-added to the group")
+                    banned_users.pop(target_user_id, None)
+                    former_members.pop(target_user_id, None)
+                    return True
+                time.sleep(1)
+            send_system_message(f"> @{sender_name}: {original_text}\nError: Timed out confirming unban for {target_username}")
             return False
-
-        # Poll results endpoint
-        results_url = f"https://api.groupme.com/v3/groups/{GROUP_ID}/members/results/{results_id}"
-        for _ in range(6):
-            r = requests.get(results_url, headers=headers, timeout=5)
-            r.raise_for_status()
-            res = r.json().get("response", {})
-            if res.get("status") in ["success", "complete"]:
-                logger.info(f"✅ Unbanned {target_username} ({target_user_id})")
-                send_system_message(f"> @{sender_name}: {original_text}\n✅ {target_username} has been unbanned and re-added to the group")
-                banned_users.pop(target_user_id, None)
-                former_members.pop(target_user_id, None)
-                return True
-            time.sleep(1)
-
-        send_system_message(f"> @{sender_name}: {original_text}\nError: Timed out confirming unban for {target_username}")
-        return False
+        else:
+            # No results_id returned; treat as immediate success if status code OK
+            logger.info(f"✅ Unbanned {target_username} ({target_user_id}) (no results_id)")
+            send_system_message(f"> @{sender_name}: {original_text}\n✅ {target_username} has been unbanned and re-added to the group")
+            banned_users.pop(target_user_id, None)
+            former_members.pop(target_user_id, None)
+            return True
 
     except Exception as e:
         logger.error(f"❌ Unban error: {e}")
         send_system_message(f"> @{sender_name}: {original_text}\nError: Failed to unban '{target_alias}'")
         return False
+
+# -----------------------
+# Moderation / messaging
+# -----------------------
 
 def check_for_violations(text, user_id, username):
     text_lower = text.lower()
@@ -262,6 +334,10 @@ def send_message(text):
         logger.error(f"GroupMe send error: {e}")
         return False
 
+# -----------------------
+# Helpers for system detection
+# -----------------------
+
 def is_system_message(data):
     sender_type = data.get('sender_type')
     sender_name = data.get('name', '').lower()
@@ -283,6 +359,10 @@ def is_real_system_event(text_lower):
     ]
     return any(pattern in text_lower for pattern in system_patterns)
 
+# -----------------------
+# Webhook endpoint
+# -----------------------
+
 @app.route('/webhook', methods=['POST'])
 def webhook():
     try:
@@ -296,16 +376,53 @@ def webhook():
         text_lower = text.lower()
         attachments = data.get("attachments", [])
         
+        # If it's a user message, remember them in the cache so we can resolve later if they leave
+        if sender_type == 'user' and sender and user_id:
+            remember_member(sender, user_id)
+
         # SYSTEM MESSAGE HANDLING
         if sender_type == "system" or is_system_message(data):
             if is_real_system_event(text_lower):
                 if 'has left the group' in text_lower:
-                    former_members[user_id or f"ghost-{sender}"] = sender
+                    # Prefer explicit user_id if provided; otherwise attempt to resolve from cache by name
+                    if user_id:
+                        former_members[user_id] = sender
+                    else:
+                        # Try fuzzy match against our cache
+                        refresh_member_cache()
+                        if member_cache:
+                            best = process.extractOne(sender.lower(), list(member_cache.keys()))
+                            if best and best[1] >= 70:
+                                resolved_uid = member_cache.get(best[0])
+                                if resolved_uid:
+                                    former_members[resolved_uid] = id_to_name.get(resolved_uid, sender)
+                                else:
+                                    former_members[f"ghost-{sender}"] = sender
+                            else:
+                                former_members[f"ghost-{sender}"] = sender
+                        else:
+                            former_members[f"ghost-{sender}"] = sender
                     send_system_message("GAY")
                 elif 'has joined the group' in text_lower:
                     send_system_message("Welcome to Clean Memes, check the rules and announcement topics before chatting!")
                 elif 'was removed from the group' in text_lower or 'removed' in text_lower:
-                    former_members[user_id or f"ghost-{sender}"] = sender
+                    # same resolution attempt for removed
+                    if user_id:
+                        former_members[user_id] = sender
+                    else:
+                        refresh_member_cache()
+                        if member_cache:
+                            best = process.extractOne(sender.lower(), list(member_cache.keys()))
+                            if best and best[1] >= 70:
+                                resolved_uid = member_cache.get(best[0])
+                                if resolved_uid:
+                                    former_members[resolved_uid] = id_to_name.get(resolved_uid, sender)
+                                else:
+                                    former_members[f"ghost-{sender}"] = sender
+                            else:
+                                former_members[f"ghost-{sender}"] = sender
+                        else:
+                            former_members[f"ghost-{sender}"] = sender
                     send_system_message("this could be you if you break the rules, watch it. 👀")
             return '', 200
         
@@ -321,7 +438,7 @@ def webhook():
             return '', 200
         
         # User ID query
-        if text_lower.startswith('!userid ') or 'what is' in text_lower and 'user id' in text_lower:
+        if text_lower.startswith('!userid ') or ('what is' in text_lower and 'user id' in text_lower):
             target_alias = text_lower.replace('!userid ', '').strip()
             if 'what is' in text_lower:
                 target_alias = text_lower.split('user id')[0].replace('what is', '').strip()
@@ -333,7 +450,7 @@ def webhook():
         if user_id and text:
             check_for_violations(text, user_id, sender)
         
-        # User triggers
+        # User triggers (keep unchanged)
         if 'clean memes' in text_lower:
             send_message("We're the best!")
         elif 'wsg' in text_lower:
