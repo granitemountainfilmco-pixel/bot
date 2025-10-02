@@ -27,7 +27,7 @@ ADMIN_IDS = [
 
 # Swear word categories
 INSTANT_BAN_WORDS = [
-    'nigger', 'nigga', 'n1gger', 'n1gga', 'nigg', 'n1gg'
+    'nigger', 'nigga', 'n1gger', 'n1gga', 'nigg', 'n1gg', 'nigha'
 ]
 
 REGULAR_SWEAR_WORDS = [
