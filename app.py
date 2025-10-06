@@ -5,6 +5,7 @@ import time
 import logging
 from fuzzywuzzy import process
 import json
+import re
 
 app = Flask(__name__)
 
@@ -18,6 +19,7 @@ BOT_NAME = os.getenv("BOT_NAME", "ClankerBot")
 GROUP_ID = os.getenv("GROUP_ID")
 BAN_SERVICE_URL = os.getenv("BAN_SERVICE_URL")
 ACCESS_TOKEN = os.getenv("ACCESS_TOKEN")  # GroupMe API token for member list and add
+API_URL = "https://api.groupme.com/v3"
 ADMIN_IDS = [
     '119189324', '82717917', '124068433', '103258964', '123259855',
     '114848297', '121920211', '134245360', '113819798', '130463543',
@@ -51,6 +53,7 @@ REGULAR_SWEAR_WORDS = [
 # Track user swear counts and banned users (persisted)
 banned_users_file = "banned_users.json"
 former_members_file = "former_members.json"
+user_swear_counts_file = "user_swear_counts.json"
 user_swear_counts = {}
 banned_users = {}
 former_members = {}
@@ -73,12 +76,29 @@ def save_json(file_path, data):
         logger.error(f"Failed to save {file_path}: {e}")
 
 banned_users = load_json(banned_users_file)
+user_swear_counts = load_json(user_swear_counts_file)
 former_members = load_json(former_members_file)
 
 # Cooldowns
 last_sent_time = 0
 last_system_message_time = 0
 cooldown_seconds = 10
+
+def get_group_members():
+    if not ACCESS_TOKEN or not GROUP_ID:
+        logger.error("Missing ACCESS_TOKEN or GROUP_ID for group members")
+        return []
+    try:
+        response = requests.get(
+            f"{API_URL}/groups/{GROUP_ID}",
+            headers={"X-Access-Token": ACCESS_TOKEN},
+            timeout=5
+        )
+        response.raise_for_status()
+        return response.json().get("response", {}).get("members", [])
+    except Exception as e:
+        logger.error(f"Failed to get group members: {e}")
+        return []
 
 def call_ban_service(user_id, username, reason):
     if not BAN_SERVICE_URL:
@@ -95,6 +115,8 @@ def call_ban_service(user_id, username, reason):
             logger.info(f"✅ Banned {username} ({user_id}): {reason}")
             banned_users[user_id] = username
             save_json(banned_users_file, banned_users)
+            user_swear_counts.pop(user_id, None)
+            save_json(user_swear_counts_file, user_swear_counts)
             return True
         else:
             logger.error(f"❌ Ban failed {response.status_code}: {response.text}")
@@ -113,13 +135,7 @@ def get_user_id(target_alias, sender_name, sender_id, original_text):
         return False
     
     try:
-        response = requests.get(
-            f"https://api.groupme.com/v3/groups/{GROUP_ID}",
-            headers={"X-Access-Token": ACCESS_TOKEN},
-            timeout=5
-        )
-        response.raise_for_status()
-        members = response.json().get("response", {}).get("members", [])
+        members = get_group_members()
         if not members:
             send_system_message(f"> @{sender_name}: {original_text}\nError: No members found")
             return False
@@ -149,23 +165,36 @@ def unban_user(target_alias, sender, sender_id, full_text):
     Uses ACCESS_TOKEN of a real admin for /members/add.
     Includes automatic retry and clearer diagnostics.
     """
+    if sender_id not in ADMIN_IDS:
+        send_system_message(f"> @{sender}: {full_text}\nError: Only admins can use this command")
+        return
+
+    if not ACCESS_TOKEN or not GROUP_ID:
+        send_system_message(f"> @{sender}: {full_text}\nError: Missing ACCESS_TOKEN or GROUP_ID")
+        logger.error("Missing ACCESS_TOKEN or GROUP_ID for unban")
+        return
+
     try:
-        # Find user record
-        match = next((u for u in banned_users.values()
-                      if target_alias.lower() in u.get("alias", "").lower()
-                      or str(u.get("user_id")) == target_alias), None)
-        if not match:
-            send_message(f"⚠️ No record of '{target_alias}' in banned list.")
+        # Find user record in banned_users {user_id: username}
+        match_user_id = None
+        match_nickname = None
+        for user_id, username in banned_users.items():
+            if target_alias.lower() in username.lower() or str(user_id) == target_alias:
+                match_user_id = user_id
+                match_nickname = username
+                break
+
+        if not match_user_id:
+            send_system_message(f"> @{sender}: {full_text}\n⚠️ No record of '{target_alias}' in banned list.")
             return
 
-        user_id   = match.get("user_id")
-        nickname  = match.get("nickname", match.get("alias", "Unknown"))
+        nickname = match_nickname
         safe_name = re.sub(r"[^A-Za-z0-9 _\\-]", "", nickname)[:30] or "User"
 
-        logger.info(f"Attempting to unban {nickname} ({user_id})")
+        logger.info(f"Attempting to unban {nickname} ({match_user_id})")
 
         # --- Primary add attempt ---
-        payload = {"members": [{"nickname": safe_name, "user_id": user_id}]}
+        payload = {"members": [{"nickname": safe_name, "user_id": match_user_id}]}
         resp = requests.post(
             f"{API_URL}/groups/{GROUP_ID}/members/add",
             headers={"X-Access-Token": ACCESS_TOKEN},
@@ -175,22 +204,24 @@ def unban_user(target_alias, sender, sender_id, full_text):
 
         if resp.status_code not in (200, 202):
             logger.warning(f"Unban HTTP error {resp.status_code}: {resp.text}")
-            send_message(f"❌ Could not unban {nickname} ({resp.status_code})")
+            send_system_message(f"> @{sender}: {full_text}\n❌ Could not unban {nickname} ({resp.status_code})")
             return
 
         time.sleep(3)
         members = get_group_members()
-        if any(str(m.get("user_id")) == str(user_id) for m in members):
-            logger.info(f"✅ Successfully re-added {nickname} ({user_id})")
-            send_message(f"✅ {nickname} re-added to the group.")
-            banned_users.pop(str(user_id), None)
-            save_banned_users()
+        if any(str(m.get("user_id")) == str(match_user_id) for m in members):
+            logger.info(f"✅ Successfully re-added {nickname} ({match_user_id})")
+            send_system_message(f"> @{sender}: {full_text}\n✅ {nickname} re-added to the group.")
+            banned_users.pop(match_user_id, None)
+            save_json(banned_users_file, banned_users)
+            user_swear_counts.pop(match_user_id, None)
+            save_json(user_swear_counts_file, user_swear_counts)
             return
 
         # --- Retry with simplified nickname if first add failed ---
-        logger.warning(f"Unban request accepted but user not added: {nickname} ({user_id}); retrying once.")
+        logger.warning(f"Unban request accepted but user not added: {nickname} ({match_user_id}); retrying once.")
         retry_name = re.sub(r"[^A-Za-z0-9]", "", safe_name)[:20] or "Member"
-        retry_payload = {"members": [{"nickname": retry_name, "user_id": user_id}]}
+        retry_payload = {"members": [{"nickname": retry_name, "user_id": match_user_id}]}
 
         time.sleep(2)
         retry_resp = requests.post(
@@ -202,17 +233,20 @@ def unban_user(target_alias, sender, sender_id, full_text):
 
         time.sleep(3)
         members = get_group_members()
-        if any(str(m.get("user_id")) == str(user_id) for m in members):
-            logger.info(f"✅ Retry succeeded for {retry_name} ({user_id})")
-            send_message(f"✅ {retry_name} re-added after retry.")
-            banned_users.pop(str(user_id), None)
-            save_banned_users()
+        if any(str(m.get("user_id")) == str(match_user_id) for m in members):
+            logger.info(f"✅ Retry succeeded for {retry_name} ({match_user_id})")
+            send_system_message(f"> @{sender}: {full_text}\n✅ {retry_name} re-added after retry.")
+            banned_users.pop(match_user_id, None)
+            save_json(banned_users_file, banned_users)
+            user_swear_counts.pop(match_user_id, None)
+            save_json(user_swear_counts_file, user_swear_counts)
         else:
             logger.warning(
-                f"⚠️ Unban failed even after retry: {nickname} ({user_id}). "
+                f"⚠️ Unban failed even after retry: {nickname} ({match_user_id}). "
                 "Likely GroupMe sync delay or large-group cap."
             )
-            send_message(
+            send_system_message(
+                f"> @{sender}: {full_text}\n"
                 f"⚠️ Could not automatically re-add {nickname}. "
                 "GroupMe probably rejected the add because of group size or a stale membership cache. "
                 "Please re-add manually."
@@ -220,7 +254,7 @@ def unban_user(target_alias, sender, sender_id, full_text):
 
     except Exception as e:
         logger.error(f"unban_user error: {e}")
-        send_message(f"❌ Error while unbanning {target_alias}: {e}")
+        send_system_message(f"> @{sender}: {full_text}\n❌ Error while unbanning {target_alias}: {str(e)}")
 
 # --- BAN LOGIC (unchanged except for persistence) ---
 def ban_user(target_alias, sender_name, sender_id, original_text):
@@ -233,13 +267,7 @@ def ban_user(target_alias, sender_name, sender_id, original_text):
         return False
 
     try:
-        response = requests.get(
-            f"https://api.groupme.com/v3/groups/{GROUP_ID}",
-            headers={"X-Access-Token": ACCESS_TOKEN},
-            timeout=5
-        )
-        response.raise_for_status()
-        members = response.json().get("response", {}).get("members", [])
+        members = get_group_members()
         if not members:
             send_system_message(f"> @{sender_name}: {original_text}\nError: No members found")
             return False
@@ -288,6 +316,7 @@ def check_for_violations(text, user_id, username):
             if user_id not in user_swear_counts:
                 user_swear_counts[user_id] = 0
             user_swear_counts[user_id] += 1
+            save_json(user_swear_counts_file, user_swear_counts)
             current_count = user_swear_counts[user_id]
             logger.info(f"{username} swear count: {current_count}/10")
             
@@ -296,6 +325,7 @@ def check_for_violations(text, user_id, username):
                 if success:
                     send_system_message(f"🔨 {username} has been banned for repeated inappropriate language (10 strikes).")
                     user_swear_counts[user_id] = 0
+                    save_json(user_swear_counts_file, user_swear_counts)
                 return True
             else:
                 remaining = 10 - current_count
@@ -454,6 +484,7 @@ def reset_count():
             return {"error": "user_id required"}, 400
         old_count = user_swear_counts.get(user_id, 0)
         user_swear_counts[user_id] = 0
+        save_json(user_swear_counts_file, user_swear_counts)
         return {"success": True, "old_count": old_count, "new_count": 0}
     except Exception as e:
         logger.error(f"Reset count error: {e}")
