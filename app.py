@@ -30,7 +30,7 @@ ADMIN_IDS = [
 
 # Swear word categories
 INSTANT_BAN_WORDS = [
-    'nigger', 'nigga', 'n1gger', 'n1gga', 'nigg', 'n1gg', 'nigha'
+    'nigger', 'nigga', 'n1gger', 'n1gga', 'nigg', 'n1gg', 'nigha',
 ]
 
 REGULAR_SWEAR_WORDS = [
@@ -47,7 +47,7 @@ REGULAR_SWEAR_WORDS = [
     'retard',
     'wtf',
     'nevergonnagiveyouupnevergonnaletyoudown',
-    '67', '6-7', '6 7'
+    '67', '6-7', '6 7', 'bullshit', 'maggot'
 ]
 
 # Track user swear counts and banned users (persisted)
@@ -175,13 +175,19 @@ def unban_user(target_alias, sender, sender_id, full_text):
         return
 
     try:
+        # Check group size
+        members = get_group_members()
+        if len(members) >= 5000:
+            send_system_message(f"> @{sender}: {full_text}\n⚠️ Cannot unban: Group has reached maximum 5000 members.")
+            return
+
         # Find user record in banned_users {user_id: username}
         match_user_id = None
         match_nickname = None
-        for user_id, username in banned_users.items():
-            if target_alias.lower() in username.lower() or str(user_id) == target_alias:
-                match_user_id = user_id
-                match_nickname = username
+        for uid, uname in banned_users.items():
+            if target_alias.lower() in uname.lower() or str(uid) == target_alias:
+                match_user_id = uid
+                match_nickname = uname
                 break
 
         if not match_user_id:
@@ -193,24 +199,77 @@ def unban_user(target_alias, sender, sender_id, full_text):
 
         logger.info(f"Attempting to unban {nickname} ({match_user_id})")
 
-        # --- Primary add attempt ---
-        payload = {"members": [{"nickname": safe_name, "user_id": match_user_id}]}
-        resp = requests.post(
-            f"{API_URL}/groups/{GROUP_ID}/members/add",
-            headers={"X-Access-Token": ACCESS_TOKEN},
-            json=payload,
-            timeout=10
-        )
+        def attempt_add(nick_to_add, is_retry=False):
+            payload = {"members": [{"nickname": nick_to_add, "user_id": match_user_id}]}
+            resp = requests.post(
+                f"{API_URL}/groups/{GROUP_ID}/members/add",
+                headers={"X-Access-Token": ACCESS_TOKEN},
+                json=payload,
+                timeout=10
+            )
 
-        if resp.status_code not in (200, 202):
-            logger.warning(f"Unban HTTP error {resp.status_code}: {resp.text}")
-            send_system_message(f"> @{sender}: {full_text}\n❌ Could not unban {nickname} ({resp.status_code})")
-            return
+            if resp.status_code not in (200, 202):
+                logger.warning(f"Unban HTTP error {resp.status_code}: {resp.text}")
+                return False, resp.status_code
 
-        time.sleep(3)
-        members = get_group_members()
-        if any(str(m.get("user_id")) == str(match_user_id) for m in members):
-            logger.info(f"✅ Successfully re-added {nickname} ({match_user_id})")
+            try:
+                data = resp.json()
+                results_id = data.get('response', {}).get('results_id')
+                if not results_id:
+                    # Fallback to sync check
+                    logger.warning("No results_id, falling back to sync check")
+                    time.sleep(3)
+                    new_members = get_group_members()
+                    return any(str(m.get("user_id")) == str(match_user_id) for m in new_members), 0
+            except Exception as e:
+                logger.error(f"Failed to parse add response: {e}")
+                return False, 500
+
+            # Poll for results
+            max_polls = 10
+            for attempt in range(max_polls):
+                sleep_time = 2 if attempt > 0 else 1  # Initial poll after 1s
+                time.sleep(sleep_time)
+                try:
+                    poll_resp = requests.get(
+                        f"{API_URL}/groups/{GROUP_ID}/members/results/{results_id}",
+                        headers={"X-Access-Token": ACCESS_TOKEN},
+                        timeout=5
+                    )
+                    if poll_resp.status_code == 503:
+                        continue
+                    elif poll_resp.status_code == 404:
+                        logger.warning("Results expired")
+                        return False, 404
+                    elif poll_resp.status_code == 200:
+                        results_data = poll_resp.json().get('response', {})
+                        added_members = results_data.get('members', [])
+                        if any(str(m.get('user_id')) == str(match_user_id) for m in added_members):
+                            logger.info(f"✅ Successfully re-added {nick_to_add} ({match_user_id}) via poll")
+                            # Double-check in group members
+                            time.sleep(2)
+                            final_members = get_group_members()
+                            if any(str(m.get("user_id")) == str(match_user_id) for m in final_members):
+                                return True, 0
+                            else:
+                                logger.warning("Poll success but not in final members list")
+                                return False, 200
+                        else:
+                            logger.warning("Poll returned 200 but user not added")
+                            return False, 200
+                    else:
+                        return False, poll_resp.status_code
+                except Exception as e:
+                    logger.error(f"Poll attempt {attempt + 1} error: {e}")
+                    if attempt < max_polls - 1:
+                        continue
+
+            logger.warning("Polling timed out")
+            return False, 408
+
+        # Primary attempt
+        success, status_code = attempt_add(safe_name, False)
+        if success:
             send_system_message(f"> @{sender}: {full_text}\n✅ {nickname} re-added to the group.")
             banned_users.pop(match_user_id, None)
             save_json(banned_users_file, banned_users)
@@ -218,37 +277,24 @@ def unban_user(target_alias, sender, sender_id, full_text):
             save_json(user_swear_counts_file, user_swear_counts)
             return
 
-        # --- Retry with simplified nickname if first add failed ---
-        logger.warning(f"Unban request accepted but user not added: {nickname} ({match_user_id}); retrying once.")
+        # Retry with simplified nickname
+        logger.warning(f"Primary unban failed (code {status_code}); retrying once.")
         retry_name = re.sub(r"[^A-Za-z0-9]", "", safe_name)[:20] or "Member"
-        retry_payload = {"members": [{"nickname": retry_name, "user_id": match_user_id}]}
+        success, status_code = attempt_add(retry_name, True)
 
-        time.sleep(2)
-        retry_resp = requests.post(
-            f"{API_URL}/groups/{GROUP_ID}/members/add",
-            headers={"X-Access-Token": ACCESS_TOKEN},
-            json=retry_payload,
-            timeout=10
-        )
-
-        time.sleep(3)
-        members = get_group_members()
-        if any(str(m.get("user_id")) == str(match_user_id) for m in members):
-            logger.info(f"✅ Retry succeeded for {retry_name} ({match_user_id})")
+        if success:
             send_system_message(f"> @{sender}: {full_text}\n✅ {retry_name} re-added after retry.")
             banned_users.pop(match_user_id, None)
             save_json(banned_users_file, banned_users)
             user_swear_counts.pop(match_user_id, None)
             save_json(user_swear_counts_file, user_swear_counts)
         else:
-            logger.warning(
-                f"⚠️ Unban failed even after retry: {nickname} ({match_user_id}). "
-                "Likely GroupMe sync delay or large-group cap."
-            )
+            error_msg = f"GroupMe sync delay, large-group cap (5000 max), or API error {status_code}"
+            logger.warning(f"⚠️ Unban failed even after retry: {nickname} ({match_user_id}). {error_msg}")
             send_system_message(
                 f"> @{sender}: {full_text}\n"
                 f"⚠️ Could not automatically re-add {nickname}. "
-                "GroupMe probably rejected the add because of group size or a stale membership cache. "
+                f"{error_msg}. "
                 "Please re-add manually."
             )
 
