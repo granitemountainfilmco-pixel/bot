@@ -100,6 +100,21 @@ def get_group_members():
         logger.error(f"Failed to get group members: {e}")
         return []
 
+def get_group_share_url():
+    if not ACCESS_TOKEN or not GROUP_ID:
+        return None
+    try:
+        response = requests.get(
+            f"{API_URL}/groups/{GROUP_ID}",
+            headers={"X-Access-Token": ACCESS_TOKEN},
+            timeout=5
+        )
+        response.raise_for_status()
+        return response.json().get("response", {}).get("share_url")
+    except Exception as e:
+        logger.error(f"Failed to get group share URL: {e}")
+        return None
+
 def call_ban_service(user_id, username, reason):
     if not BAN_SERVICE_URL:
         logger.warning("No BAN_SERVICE_URL configured - can't ban users")
@@ -226,9 +241,10 @@ def unban_user(target_alias, sender, sender_id, full_text):
                 return False, 500
 
             # Poll for results
-            max_polls = 10
+            max_polls = 15  # Increased for longer delays
+            poll_successful = False
             for attempt in range(max_polls):
-                sleep_time = 2 if attempt > 0 else 1  # Initial poll after 1s
+                sleep_time = 3 if attempt > 0 else 1  # Slightly longer initial and progressive
                 time.sleep(sleep_time)
                 try:
                     poll_resp = requests.get(
@@ -240,36 +256,56 @@ def unban_user(target_alias, sender, sender_id, full_text):
                         continue
                     elif poll_resp.status_code == 404:
                         logger.warning("Results expired")
-                        return False, 404
+                        break
                     elif poll_resp.status_code == 200:
                         results_data = poll_resp.json().get('response', {})
                         added_members = results_data.get('members', [])
+                        logger.info(f"Poll {attempt + 1} response members count: {len(added_members)}")  # Log count
+                        logger.debug(f"Full poll response: {poll_resp.json()}")  # Detailed log
                         if any(str(m.get('user_id')) == str(match_user_id) for m in added_members):
-                            logger.info(f"✅ Successfully re-added {nick_to_add} ({match_user_id}) via poll")
-                            # Double-check in group members
-                            time.sleep(2)
-                            final_members = get_group_members()
-                            if any(str(m.get("user_id")) == str(match_user_id) for m in final_members):
-                                return True, 0
-                            else:
-                                logger.warning("Poll success but not in final members list")
-                                return False, 200
+                            logger.info(f"✅ User found in poll results for {nick_to_add}")
+                            poll_successful = True
+                            break
                         else:
-                            logger.warning("Poll returned 200 but user not added")
-                            return False, 200
+                            logger.warning(f"Poll {attempt + 1} returned 200 but user {match_user_id} not in added members")
                     else:
-                        return False, poll_resp.status_code
+                        logger.warning(f"Poll {attempt + 1} unexpected status: {poll_resp.status_code}")
+                        break
                 except Exception as e:
                     logger.error(f"Poll attempt {attempt + 1} error: {e}")
                     if attempt < max_polls - 1:
                         continue
 
-            logger.warning("Polling timed out")
-            return False, 408
+            if not poll_successful:
+                if attempt == max_polls - 1:
+                    logger.warning("Polling timed out without finding user in results")
+                return False, 408
+
+            # If poll successful (user in results), double-check in group
+            time.sleep(5)  # Longer sleep for sync
+            final_members = get_group_members()
+            if any(str(m.get("user_id")) == str(match_user_id) for m in final_members):
+                logger.info(f"✅ Confirmed in group after poll success for {nick_to_add}")
+                return True, 0
+            else:
+                logger.warning("User in poll but not in final group members; possible sync delay")
+                return False, 200
 
         # Primary attempt
         success, status_code = attempt_add(safe_name, False)
         if success:
+            send_system_message(f"> @{sender}: {full_text}\n✅ {nickname} re-added to the group.")
+            banned_users.pop(match_user_id, None)
+            save_json(banned_users_file, banned_users)
+            user_swear_counts.pop(match_user_id, None)
+            save_json(user_swear_counts_file, user_swear_counts)
+            return
+
+        # Always check group after primary (for omitted cases)
+        time.sleep(10)  # Extra wait for potential omitted add
+        members_after_primary = get_group_members()
+        if any(str(m.get("user_id")) == str(match_user_id) for m in members_after_primary):
+            logger.info(f"✅ User added despite omitted from poll results: {nickname}")
             send_system_message(f"> @{sender}: {full_text}\n✅ {nickname} re-added to the group.")
             banned_users.pop(match_user_id, None)
             save_json(banned_users_file, banned_users)
@@ -288,15 +324,30 @@ def unban_user(target_alias, sender, sender_id, full_text):
             save_json(banned_users_file, banned_users)
             user_swear_counts.pop(match_user_id, None)
             save_json(user_swear_counts_file, user_swear_counts)
+            return
+
+        # Always check group after retry
+        time.sleep(10)
+        members_after_retry = get_group_members()
+        if any(str(m.get("user_id")) == str(match_user_id) for m in members_after_retry):
+            logger.info(f"✅ User added on retry despite omitted from poll: {nickname}")
+            send_system_message(f"> @{sender}: {full_text}\n✅ {nickname} re-added after retry.")
+            banned_users.pop(match_user_id, None)
+            save_json(banned_users_file, banned_users)
+            user_swear_counts.pop(match_user_id, None)
+            save_json(user_swear_counts_file, user_swear_counts)
+            return
+
+        # Final failure: Provide share URL
+        share_url = get_group_share_url()
+        error_msg = f"GroupMe sync delay, recent removal cooldown, user privacy settings, or API silent failure (code {status_code})"
+        logger.warning(f"⚠️ Unban failed even after retry and final checks: {nickname} ({match_user_id}). {error_msg}")
+        fallback_msg = f"⚠️ Could not automatically re-add {nickname}. {error_msg}. "
+        if share_url:
+            fallback_msg += f"Please share this link with {nickname}: {share_url}"
         else:
-            error_msg = f"GroupMe sync delay, large-group cap (5000 max), or API error {status_code}"
-            logger.warning(f"⚠️ Unban failed even after retry: {nickname} ({match_user_id}). {error_msg}")
-            send_system_message(
-                f"> @{sender}: {full_text}\n"
-                f"⚠️ Could not automatically re-add {nickname}. "
-                f"{error_msg}. "
-                "Please re-add manually."
-            )
+            fallback_msg += "Please re-add manually via the GroupMe app."
+        send_system_message(f"> @{sender}: {full_text}\n{fallback_msg}")
 
     except Exception as e:
         logger.error(f"unban_user error: {e}")
