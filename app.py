@@ -143,86 +143,84 @@ def get_user_id(target_alias, sender_name, sender_id, original_text):
         send_system_message(f"> @{sender_name}: {original_text}\nError: Failed to fetch user_id")
         return False
 
-def unban_user(target_alias, sender_name, sender_id, original_text):
-    if sender_id not in ADMIN_IDS:
-        send_system_message(f"> @{sender_name}: {original_text}\nError: Only admins can use this command")
-        logger.warning(f"Non-admin {sender_name} ({sender_id}) attempted unban")
-        return False
-    if not ACCESS_TOKEN or not GROUP_ID:
-        send_system_message(f"> @{sender_name}: {original_text}\nError: Missing ACCESS_TOKEN or GROUP_ID")
-        logger.error("Missing ACCESS_TOKEN or GROUP_ID for unban")
-        return False
-
-    # Collect candidates from both banned_users and former_members
-    candidates = {uname.lower(): (uid, uname) for uid, uname in {**banned_users, **former_members}.items()}
-    if not candidates:
-        send_system_message(f"> @{sender_name}: {original_text}\nError: No known banned or removed users to unban")
-        logger.info("No candidates available for unban")
-        return False
-
-    # Fuzzy match
-    best_match = process.extractOne(target_alias.lower(), list(candidates.keys()), score_cutoff=60)
-    if not best_match:
-        closest = process.extractOne(target_alias.lower(), list(candidates.keys()))[0] if candidates else "none"
-        send_system_message(f"> @{sender_name}: {original_text}\nError: No banned/removed user found matching '{target_alias}' (closest: {closest})")
-        logger.info(f"No match for '{target_alias}' in candidates")
-        return False
-
-    target_user_id, target_username = candidates[best_match[0]]
-    logger.info(f"Attempting to unban {target_username} ({target_user_id})")
-
-    # Check if user is already in the group
+def unban_user(target_alias, sender, sender_id, full_text):
+    """
+    Attempt to unban (re-add) a user who was banned by the bot.
+    Uses ACCESS_TOKEN of a real admin for /members/add.
+    Includes automatic retry and clearer diagnostics.
+    """
     try:
-        response = requests.get(
-            f"https://api.groupme.com/v3/groups/{GROUP_ID}",
+        # Find user record
+        match = next((u for u in banned_users.values()
+                      if target_alias.lower() in u.get("alias", "").lower()
+                      or str(u.get("user_id")) == target_alias), None)
+        if not match:
+            send_message(f"⚠️ No record of '{target_alias}' in banned list.")
+            return
+
+        user_id   = match.get("user_id")
+        nickname  = match.get("nickname", match.get("alias", "Unknown"))
+        safe_name = re.sub(r"[^A-Za-z0-9 _\\-]", "", nickname)[:30] or "User"
+
+        logger.info(f"Attempting to unban {nickname} ({user_id})")
+
+        # --- Primary add attempt ---
+        payload = {"members": [{"nickname": safe_name, "user_id": user_id}]}
+        resp = requests.post(
+            f"{API_URL}/groups/{GROUP_ID}/members/add",
             headers={"X-Access-Token": ACCESS_TOKEN},
-            timeout=5
+            json=payload,
+            timeout=10
         )
-        response.raise_for_status()
-        members = response.json().get("response", {}).get("members", [])
-        if any(member["user_id"] == target_user_id for member in members):
-            send_system_message(f"> @{sender_name}: {original_text}\nError: {target_username} is already in the group")
-            logger.info(f"Unban failed: {target_username} ({target_user_id}) already in group")
-            return False
-    except Exception as e:
-        logger.error(f"Error checking group members: {e}")
-        send_system_message(f"> @{sender_name}: {original_text}\nError: Failed to verify group membership for {target_username}")
-        return False
 
-    # Attempt to re-add user using ACCESS_TOKEN
-    url = f"https://api.groupme.com/v3/groups/{GROUP_ID}/members/add"
-    payload = {"members": [{"user_id": target_user_id, "nickname": target_username}]}
-    headers = {"X-Access-Token": ACCESS_TOKEN}
+        if resp.status_code not in (200, 202):
+            logger.warning(f"Unban HTTP error {resp.status_code}: {resp.text}")
+            send_message(f"❌ Could not unban {nickname} ({resp.status_code})")
+            return
 
-    try:
-        response = requests.post(url, json=payload, headers=headers, timeout=5)
-        if response.status_code in [200, 202]:
-            # Verify the member was added
-            time.sleep(1)  # short delay
-            check = requests.get(f"https://api.groupme.com/v3/groups/{GROUP_ID}", headers=headers, timeout=5)
-            check.raise_for_status()
-            members = check.json().get("response", {}).get("members", [])
-            if any(m["user_id"] == target_user_id for m in members):
-                logger.info(f"Unban successful for {target_username} ({target_user_id})")
-                send_system_message(f"> @{sender_name}: {original_text}\n✅ {target_username} has been unbanned and re-added to the group")
-                banned_users.pop(target_user_id, None)
-                former_members.pop(target_user_id, None)
-                save_json(banned_users_file, banned_users)
-                save_json(former_members_file, former_members)
-                return True
-            else:
-                logger.warning(f"Unban request accepted but user not added: {target_username} ({target_user_id})")
-                send_system_message(f"> @{sender_name}: {original_text}\nError: Could not re-add {target_username} - user may have left voluntarily or blocked bot")
-                return False
+        time.sleep(3)
+        members = get_group_members()
+        if any(str(m.get("user_id")) == str(user_id) for m in members):
+            logger.info(f"✅ Successfully re-added {nickname} ({user_id})")
+            send_message(f"✅ {nickname} re-added to the group.")
+            banned_users.pop(str(user_id), None)
+            save_banned_users()
+            return
+
+        # --- Retry with simplified nickname if first add failed ---
+        logger.warning(f"Unban request accepted but user not added: {nickname} ({user_id}); retrying once.")
+        retry_name = re.sub(r"[^A-Za-z0-9]", "", safe_name)[:20] or "Member"
+        retry_payload = {"members": [{"nickname": retry_name, "user_id": user_id}]}
+
+        time.sleep(2)
+        retry_resp = requests.post(
+            f"{API_URL}/groups/{GROUP_ID}/members/add",
+            headers={"X-Access-Token": ACCESS_TOKEN},
+            json=retry_payload,
+            timeout=10
+        )
+
+        time.sleep(3)
+        members = get_group_members()
+        if any(str(m.get("user_id")) == str(user_id) for m in members):
+            logger.info(f"✅ Retry succeeded for {retry_name} ({user_id})")
+            send_message(f"✅ {retry_name} re-added after retry.")
+            banned_users.pop(str(user_id), None)
+            save_banned_users()
         else:
-            error_msg = response.json().get("response", {}).get("errors", ["Unknown error"])[0]
-            send_system_message(f"> @{sender_name}: {original_text}\nError: Failed to unban {target_username} - {error_msg}")
-            logger.error(f"Unban failed: {error_msg}")
-            return False
+            logger.warning(
+                f"⚠️ Unban failed even after retry: {nickname} ({user_id}). "
+                "Likely GroupMe sync delay or large-group cap."
+            )
+            send_message(
+                f"⚠️ Could not automatically re-add {nickname}. "
+                "GroupMe probably rejected the add because of group size or a stale membership cache. "
+                "Please re-add manually."
+            )
+
     except Exception as e:
-        logger.error(f"Unban error for {target_username} ({target_user_id}): {e}")
-        send_system_message(f"> @{sender_name}: {original_text}\nError: Failed to unban {target_username} - {str(e)}")
-        return False
+        logger.error(f"unban_user error: {e}")
+        send_message(f"❌ Error while unbanning {target_alias}: {e}")
 
 # --- BAN LOGIC (unchanged except for persistence) ---
 def ban_user(target_alias, sender_name, sender_id, original_text):
