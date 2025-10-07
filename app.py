@@ -699,6 +699,13 @@ def webhook():
                 ban_user(target_alias, sender, user_id, text)
             return '', 200
 
+        if text_lower.startswith('#dismantle '):
+            target_alias = text[len('#dismantle'):].strip()
+            if target_alias:
+                ban_user(target_alias, sender, user_id, text)
+            return '', 200
+
+
         if text_lower.startswith('!userid ') or ('what is' in text_lower and 'user id' in text_lower):
             target_alias = text[len('!userid '):].strip() if text_lower.startswith('!userid ') else None
             if 'what is' in text_lower and 'user id' in text_lower:
