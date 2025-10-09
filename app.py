@@ -777,6 +777,11 @@ def webhook():
             send_message("me too bro")
         elif 'https:' in text and not any(att.get("type") == "video" for att in attachments):
             send_message("Delete this, links are not allowed, admins have been notified")
+        elif 'france' in text_lower:
+            send_message("please censor that to fr*nce")
+        elif 'french' in text_lower:
+            send_message("please censor that to fr*nch")
+
 
         return '', 200
 
