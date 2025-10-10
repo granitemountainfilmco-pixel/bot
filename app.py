@@ -668,8 +668,8 @@ def webhook():
                     key = user_id or f"ghost-{sender}"
                     former_members[str(key)] = sender
                     save_json(former_members_file, former_members)
-                    # existing behavior: send "GAY" (user had this, kept for behavior parity)
-                    send_system_message("GAY")
+                    # existing behavior: send "Russian" (user had this, kept for behavior parity)
+                    send_system_message("Russian")
                 elif 'has joined the group' in text_lower:
                     send_system_message("Welcome to Clean Memes, check the rules and announcement topics before chatting!")
                 elif 'was removed from the group' in text_lower or 'removed' in text_lower:
@@ -829,7 +829,7 @@ def health():
             "strikes_tracked": len(user_strikes)
         },
         "system_triggers": {
-            "left": "GAY",
+            "left": "Russian",
             "joined": "Welcome message",
             "removed": "Rules warning"
         }
