@@ -677,6 +677,8 @@ def webhook():
                     former_members[str(key)] = sender
                     save_json(former_members_file, former_members)
                     send_system_message("this could be you if you break the rules, watch it. 👀")
+                elif 'has rejoined the group' in text_lower:
+                    send_system_message("oh look who's back")
             return '', 200
 
         # Only process user messages beyond this point
