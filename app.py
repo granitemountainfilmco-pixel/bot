@@ -891,6 +891,12 @@ def webhook():
                 ban_user(target_alias, sender, user_id, text)
             return '', 200
 
+        if text_lower.startswith('!leaderboard'):
+            msg = _build_leaderboard_message(top_n=3)
+            send_message(msg)
+            return '', 200
+
+
         if text_lower.startswith('#dismantle '):
             target_alias = text[len('#dismantle'):].strip()
             if target_alias:
