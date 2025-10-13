@@ -7,6 +7,8 @@ from fuzzywuzzy import process
 import json
 import re
 from typing import Dict, Any, Optional, Tuple, List
+import threading
+from datetime import datetime, timedelta
 
 app = Flask(__name__)
 
@@ -67,11 +69,21 @@ former_members_file = "former_members.json"        # { user_id_str_or_key: nickn
 user_swear_counts_file = "user_swear_counts.json"  # { user_id_str: int }
 strikes_file = "user_strikes.json"                 # { user_id_str: int }
 
+# New persistence for daily leaderboard
+daily_counts_file = "daily_message_counts.json"    # { "date": "YYYY-MM-DD", "counts": { user_id: int } }
+last_messages_file = "last_messages.json"          # { "date": "YYYY-MM-DD", "last": { user_id: last_message_text } }
+
 # In-memory caches
 user_swear_counts: Dict[str, int] = {}
 banned_users: Dict[str, str] = {}
 former_members: Dict[str, str] = {}
 user_strikes: Dict[str, int] = {}
+
+# In-memory structures for daily counts (loaded from files on startup)
+daily_message_counts: Dict[str, int] = {}  # user_id -> count for current date
+last_message_by_user: Dict[str, str] = {}  # user_id -> last message text for current date
+daily_counts_date: Optional[str] = None
+last_messages_date: Optional[str] = None
 
 # -----------------------
 # Helpers for JSON load/save
@@ -81,10 +93,10 @@ def load_json(file_path: str) -> Dict[str, Any]:
         try:
             with open(file_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
-                # Ensure keys are strings
+                # Ensure keys are strings if dict
                 if isinstance(data, dict):
                     return {str(k): v for k, v in data.items()}
-                return {}
+                return data
         except Exception as e:
             logger.error(f"Failed to load {file_path}: {e}")
     return {}
@@ -97,10 +109,41 @@ def save_json(file_path: str, data: Dict[str, Any]) -> None:
         logger.error(f"Failed to save {file_path}: {e}")
 
 # Load persisted data (ensure string keys)
-banned_users = load_json(banned_users_file)
-user_swear_counts = load_json(user_swear_counts_file)
-former_members = load_json(former_members_file)
-user_strikes = load_json(strikes_file)
+banned_users = load_json(banned_users_file) or {}
+user_swear_counts = load_json(user_swear_counts_file) or {}
+former_members = load_json(former_members_file) or {}
+user_strikes = load_json(strikes_file) or {}
+
+# Load daily counts and last messages, ensure they correspond to today's date
+def _initialize_daily_tracking():
+    global daily_message_counts, last_message_by_user, daily_counts_date, last_messages_date
+    today = datetime.now().strftime("%Y-%m-%d")
+
+    # Load daily counts
+    raw = load_json(daily_counts_file)
+    if isinstance(raw, dict) and raw.get("date") == today and isinstance(raw.get("counts"), dict):
+        daily_message_counts = {str(k): int(v) for k, v in raw.get("counts", {}).items()}
+        daily_counts_date = today
+        logger.info(f"Loaded daily_message_counts for {today} ({len(daily_message_counts)} users).")
+    else:
+        daily_message_counts = {}
+        daily_counts_date = today
+        save_json(daily_counts_file, {"date": today, "counts": daily_message_counts})
+        logger.info("Initialized new daily_message_counts for today.")
+
+    # Load last messages
+    raw2 = load_json(last_messages_file)
+    if isinstance(raw2, dict) and raw2.get("date") == today and isinstance(raw2.get("last"), dict):
+        last_message_by_user = {str(k): v for k, v in raw2.get("last", {}).items()}
+        last_messages_date = today
+        logger.info(f"Loaded last_message_by_user for {today} ({len(last_message_by_user)} users).")
+    else:
+        last_message_by_user = {}
+        last_messages_date = today
+        save_json(last_messages_file, {"date": today, "last": last_message_by_user})
+        logger.info("Initialized new last_message_by_user for today.")
+
+_initialize_daily_tracking()
 
 # -----------------------
 # Cooldown / rate-limiting
@@ -643,6 +686,153 @@ def is_real_system_event(text_lower: str) -> bool:
     return any(pattern in text_lower for pattern in system_patterns)
 
 # -----------------------
+# Daily leaderboard helpers
+# -----------------------
+def _ensure_today_keys():
+    """
+    Ensure in-memory daily structures correspond to today's date.
+    If the date has changed, reset in-memory and persisted files.
+    """
+    global daily_message_counts, last_message_by_user, daily_counts_date, last_messages_date
+    today = datetime.now().strftime("%Y-%m-%d")
+    if daily_counts_date != today:
+        daily_message_counts = {}
+        daily_counts_date = today
+        save_json(daily_counts_file, {"date": today, "counts": daily_message_counts})
+        logger.info("Reset daily_message_counts for new day.")
+    if last_messages_date != today:
+        last_message_by_user = {}
+        last_messages_date = today
+        save_json(last_messages_file, {"date": today, "last": last_message_by_user})
+        logger.info("Reset last_message_by_user for new day.")
+
+def increment_user_message_count(user_id: str, username: str, text: str) -> None:
+    """
+    Increment the daily count for user_id if the new message text differs from their last message text.
+    Ignore exact identical messages from same user to prevent spam counting.
+    Persist counts and last messages to disk.
+    """
+    try:
+        _ensure_today_keys()
+        uid = str(user_id)
+        last_text = last_message_by_user.get(uid)
+        # Normalizing text for exact-match comparisons: strip whitespace
+        normalized = (text or "").strip()
+        if last_text is not None and last_text == normalized:
+            # identical to last message for today; ignore
+            logger.debug(f"Ignored identical message from {username} ({uid}).")
+            return
+        # Update last message and increment
+        last_message_by_user[uid] = normalized
+        daily_message_counts[uid] = int(daily_message_counts.get(uid, 0)) + 1
+        # Persist both files
+        save_json(last_messages_file, {"date": daily_counts_date or datetime.now().strftime("%Y-%m-%d"), "last": last_message_by_user})
+        save_json(daily_counts_file, {"date": daily_counts_date or datetime.now().strftime("%Y-%m-%d"), "counts": daily_message_counts})
+        logger.debug(f"Incremented daily count for {username} ({uid}) -> {daily_message_counts[uid]}")
+    except Exception as e:
+        logger.error(f"Error incrementing user message count: {e}")
+
+def _build_leaderboard_message(top_n: int = 3) -> str:
+    """
+    Construct the short leaderboard message for the top N users.
+    Format:
+    "🏆 Daily Chat Leaders:
+    1. Alice (42)
+    2. Bob (37)
+    3. Carl (30)"
+    """
+    try:
+        _ensure_today_keys()
+        if not daily_message_counts:
+            return "🏆 Daily Chat Leaders:\nNo messages recorded today."
+        # Prepare mapping user_id -> nickname
+        members = get_group_members()
+        id_to_nick = {str(m.get("user_id")): m.get("nickname") for m in members if m.get("user_id") is not None}
+        # fallback to former members mapping
+        fallback = {str(k): v for k, v in former_members.items()}
+        # sort counts
+        sorted_items = sorted(daily_message_counts.items(), key=lambda kv: (-int(kv[1]), kv[0]))
+        lines = ["🏆 Daily Chat Leaders:"]
+        rank = 1
+        for uid, cnt in sorted_items[:top_n]:
+            name = id_to_nick.get(uid) or fallback.get(uid) or f"User {uid}"
+            lines.append(f"{rank}. {name} ({cnt})")
+            rank += 1
+        return "\n".join(lines)
+    except Exception as e:
+        logger.error(f"Error building leaderboard message: {e}")
+        return "🏆 Daily Chat Leaders:\nError building leaderboard."
+
+def _reset_daily_counts():
+    """
+    Clear in-memory and persisted daily counts and last messages for a clean start.
+    """
+    global daily_message_counts, last_message_by_user, daily_counts_date, last_messages_date
+    today = datetime.now().strftime("%Y-%m-%d")
+    daily_message_counts = {}
+    last_message_by_user = {}
+    daily_counts_date = today
+    last_messages_date = today
+    save_json(daily_counts_file, {"date": today, "counts": daily_message_counts})
+    save_json(last_messages_file, {"date": today, "last": last_message_by_user})
+    logger.info("Daily counts and last messages reset after posting leaderboard.")
+
+def _seconds_until_next_8pm():
+    """
+    Return seconds until the next local 20:00 (8 PM).
+    If it's before 8 PM today, returns seconds until today 8 PM.
+    If it's after or equal, returns seconds until tomorrow 8 PM.
+    Uses local system time.
+    """
+    now = datetime.now()
+    target = now.replace(hour=20, minute=0, second=0, microsecond=0)
+    if now >= target:
+        target = target + timedelta(days=1)
+    delta = target - now
+    return max(0, delta.total_seconds())
+
+def daily_leaderboard_worker():
+    """
+    Background thread that waits until local 8 PM, posts the leaderboard message,
+    then resets counts, and repeats.
+    """
+    logger.info("Daily leaderboard thread started.")
+    while True:
+        try:
+            secs = _seconds_until_next_8pm()
+            # Sleep until next 8 PM. Sleep in chunks to allow thread to be interruptible.
+            while secs > 0:
+                sleep_chunk = min(secs, 300)  # wake every up to 5 minutes
+                time.sleep(sleep_chunk)
+                secs -= sleep_chunk
+            # time to post leaderboard
+            msg = _build_leaderboard_message(top_n=3)
+            posted = send_message(msg)
+            if posted:
+                logger.info("Posted daily leaderboard at 8 PM local time.")
+            else:
+                logger.warning("Failed to post daily leaderboard (send_message returned False).")
+            # reset for next day
+            _reset_daily_counts()
+            # small sleep to avoid immediate re-loop edge cases
+            time.sleep(5)
+        except Exception as e:
+            logger.error(f"Daily leaderboard worker exception: {e}")
+            # wait a bit before retrying to avoid tight error loops
+            time.sleep(60)
+
+# Start the background thread when module is imported (daemon thread)
+def start_leaderboard_thread_once():
+    # Only start one thread
+    if not getattr(start_leaderboard_thread_once, "_started", False):
+        t = threading.Thread(target=daily_leaderboard_worker, daemon=True)
+        t.start()
+        start_leaderboard_thread_once._started = True
+        logger.info("Daily leaderboard background thread initialized.")
+
+start_leaderboard_thread_once()
+
+# -----------------------
 # Webhook: message handling
 # -----------------------
 @app.route('/webhook', methods=['POST'])
@@ -784,6 +974,15 @@ def webhook():
         elif 'french' in text_lower:
             send_message("please censor that to fr*nch")
 
+        # ---------------------
+        # DAILY MESSAGE COUNT TRACKING
+        # ---------------------
+        # Count distinct messages per user for today's leaderboard.
+        try:
+            if user_id and text:
+                increment_user_message_count(user_id, sender, text)
+        except Exception as e:
+            logger.error(f"Error updating daily counts for message: {e}")
 
         return '', 200
 
@@ -849,4 +1048,8 @@ if __name__ == "__main__":
     logger.info(f"Loaded banned_users: {len(banned_users)} entries")
     logger.info(f"Loaded user_swear_counts: {len(user_swear_counts)} entries")
     logger.info(f"Loaded user_strikes: {len(user_strikes)} entries")
+    # Ensure daily tracking is initialized on start
+    _initialize_daily_tracking()
+    # Start background thread (already started at import, but safe to call again)
+    start_leaderboard_thread_once()
     app.run(host="0.0.0.0", port=port, debug=False)
