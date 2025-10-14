@@ -744,7 +744,7 @@ def _build_leaderboard_message(top_n: int = 3) -> str:
     try:
         _ensure_today_keys()
         if not daily_message_counts:
-            return "🏆 Daily Chat Leaders:\nNo messages recorded today."
+            return "🏆 Daily Unemployed Leaders:\nNo messages recorded today."
         # Prepare mapping user_id -> nickname
         members = get_group_members()
         id_to_nick = {str(m.get("user_id")): m.get("nickname") for m in members if m.get("user_id") is not None}
@@ -752,7 +752,7 @@ def _build_leaderboard_message(top_n: int = 3) -> str:
         fallback = {str(k): v for k, v in former_members.items()}
         # sort counts
         sorted_items = sorted(daily_message_counts.items(), key=lambda kv: (-int(kv[1]), kv[0]))
-        lines = ["🏆 Daily Chat Leaders:"]
+        lines = ["🏆 Daily Unemployed Leaders:"]
         rank = 1
         for uid, cnt in sorted_items[:top_n]:
             name = id_to_nick.get(uid) or fallback.get(uid) or f"User {uid}"
@@ -761,7 +761,7 @@ def _build_leaderboard_message(top_n: int = 3) -> str:
         return "\n".join(lines)
     except Exception as e:
         logger.error(f"Error building leaderboard message: {e}")
-        return "🏆 Daily Chat Leaders:\nError building leaderboard."
+        return "🏆 Daily Unemployed Leaders:\nError building leaderboard."
 
 def _reset_daily_counts():
     """
