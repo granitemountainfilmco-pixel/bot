@@ -10,6 +10,82 @@ from typing import Dict, Any, Optional, Tuple, List
 import threading
 from datetime import datetime, timedelta
 
+# -----------------------
+# Attempt to import TypeTruth detector (support multiple import paths).
+# If import fails, typetruth_detect will be None and detection is skipped.
+# -----------------------
+typetruth_detect = None
+try:
+    # try common layout: package provides ai_detector.detect or detect function
+    # try import path used by upstream repo structure
+    from ai_text_detector.ai_detector import detect as typetruth_detect  # repo variant
+except Exception:
+    try:
+        # try an alternate name
+        from ai_detector import detect as typetruth_detect
+    except Exception:
+        try:
+            # try direct typetruth package (best-effort)
+            from typetruth import detect as typetruth_detect
+        except Exception:
+            typetruth_detect = None
+
+def _is_ai_text_with_typetruth(text: str) -> bool:
+    """
+    Wrapper to call the TypeTruth detect function if available.
+    Interprets several possible return formats:
+      - dict with keys like 'is_ai', 'ai', 'ai_prob', 'ai_probability'
+      - numeric score (0..1)
+      - tuple/list where first element is label or score
+      - string label
+    Returns True if detection indicates AI. False otherwise or on error.
+    """
+    if not typetruth_detect:
+        return False
+    try:
+        res = typetruth_detect(text)
+        # If the detector returns a dict
+        if isinstance(res, dict):
+            # common keys
+            if res.get("is_ai") is not None:
+                return bool(res.get("is_ai"))
+            if res.get("ai") is not None:
+                return bool(res.get("ai"))
+            # probability style
+            prob = res.get("ai_prob") or res.get("ai_probability") or res.get("probability") or res.get("score")
+            if prob is not None:
+                try:
+                    return float(prob) > 0.5
+                except Exception:
+                    pass
+            # label style
+            label = res.get("label") or res.get("prediction") or res.get("pred")
+            if isinstance(label, str):
+                return label.lower().startswith("ai") or "gpt" in label.lower()
+            return False
+        # If returns tuple/list
+        if isinstance(res, (list, tuple)):
+            first = res[0] if res else None
+            if isinstance(first, (int, float)):
+                return float(first) > 0.5
+            if isinstance(first, str):
+                return first.lower().startswith("ai") or "gpt" in first.lower()
+            # fallback: try any numeric in sequence
+            for elt in res:
+                if isinstance(elt, (int, float)):
+                    return float(elt) > 0.5
+            return False
+        # If returns a numeric score directly
+        if isinstance(res, (int, float)):
+            return float(res) > 0.5
+        # If returns string label
+        if isinstance(res, str):
+            return res.lower().startswith("ai") or "gpt" in res.lower()
+    except Exception as e:
+        logger = logging.getLogger(__name__)
+        logger.error(f"TypeTruth detection call failed: {e}")
+    return False
+
 app = Flask(__name__)
 
 # -----------------------
@@ -874,6 +950,21 @@ def webhook():
         # Only process user messages beyond this point
         if sender_type not in ['user']:
             return '', 200
+
+        # ---------------------
+        # AI DETECTION USING TYPETRUTH
+        # ---------------------
+        # Analyze every user message that has text. Only post when detection says AI.
+        try:
+            if text and user_id:
+                try:
+                    if _is_ai_text_with_typetruth(text):
+                        # announce to group mentioning the username
+                        send_system_message(f"@{sender} used AI to generate this message.")
+                except Exception as e:
+                    logger.error(f"AI detection error: {e}")
+        except Exception as e:
+            logger.error(f"AI detection wrapper error: {e}")
 
         # ---------------------
         # COMMAND HANDLING
