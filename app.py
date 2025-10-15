@@ -175,35 +175,34 @@ def google_search(query: str) -> str:
     if not query or len(query.strip()) < 3:
         return "Invalid query—try something longer!"
     
-    query_lower = query.lower().strip()
-    encoded_query = urllib.parse.quote(query_lower, safe='')
-
-    SATIRE_TITLES = [
-        'the onion', 'babylon bee', 'clickhole', 'uncyclopedia', 'satire'
-    ]
-
-    def is_satire_title(title: str) -> bool:
-        title_lower = title.lower()
-        return any(satire in title_lower for satire in SATIRE_TITLES)
+    encoded_query = urllib.parse.quote(query.strip(), safe='')
+    headers = {"User-Agent": "Mozilla/5.0 (compatible; GoogleSearchBot/1.0)"}
 
     try:
+        # Try direct summary
         summary_url = f"https://en.wikipedia.org/api/rest_v1/page/summary/{encoded_query}"
-        headers = {"User-Agent": "Mozilla/5.0 (compatible; GoogleSearchBot/1.0)"}
-        summary_resp = requests.get(summary_url, timeout=8, headers=headers)
-        summary_resp.raise_for_status()
-        summary_data = summary_resp.json()
+        r = requests.get(summary_url, timeout=8, headers=headers)
 
-        title = summary_data.get('title', '')
-        if not title or is_satire_title(title):
-            return "No reliable Wikipedia article found—try rephrasing!"
+        if r.status_code == 404:
+            # Fallback: search for nearest title
+            search_url = f"https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch={encoded_query}&format=json&utf8=1"
+            s = requests.get(search_url, timeout=8, headers=headers)
+            s.raise_for_status()
+            results = s.json().get("query", {}).get("search", [])
+            if not results:
+                return "No relevant Wikipedia article found."
+            best_title = results[0]["title"]
+            encoded_best = urllib.parse.quote(best_title, safe='')
+            r = requests.get(f"https://en.wikipedia.org/api/rest_v1/page/summary/{encoded_best}", timeout=8, headers=headers)
 
-        extract = summary_data.get('extract', '').strip()
+        r.raise_for_status()
+        data = r.json()
+        extract = data.get("extract", "").strip()
         if not extract:
             return "No summary available for this topic on Wikipedia."
 
         sentences = extract.split('. ')
         summary = '. '.join(sentences[:2]) + ('.' if not summary.endswith('.') else '')
-
         return f"Quick answer: {summary} (Source: Wikipedia)"
 
     except Exception as e:
