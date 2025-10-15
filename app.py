@@ -170,8 +170,8 @@ def get_group_share_url() -> Optional[str]:
 
 def google_search(query: str) -> str:
     """
-    Perform a simple web search and return a 1-2 sentence summary.
-    Uses DuckDuckGo's instant answer API for quick, free results.
+    Perform a filtered web search and return a 1-2 sentence summary.
+    Filters out profanity and satire sites using DuckDuckGo's API.
     """
     if not query or len(query.strip()) < 3:
         return "Invalid query—try something longer!"
@@ -179,28 +179,72 @@ def google_search(query: str) -> str:
     encoded_query = urllib.parse.quote(query)
     url = f"https://api.duckduckgo.com/?q={encoded_query}&format=json&no_html=1&skip_disambig=1"
     
+    # Profanity filter words (expand as needed)
+    PROFANITY_WORDS = set([
+        'fuck', 'fucking', 'fucked', 'shit', 'shitty', 'ass', 'asshole', 'bitch', 
+        'cunt', 'dick', 'piss', 'cock', 'tits', 'nigger', 'nigga', 'retard'
+    ])
+    
+    # Known satire/problematic sources to filter
+    SATIRE_SOURCES = [
+        'theonion.com', 'babylonbee.com', 'clickhole.com', 'redcuprebellion.com',
+        'derp.com', 'landoverbaptist.org', 'duh progressive.com'
+    ]
+    
+    def contains_profanity(text: str) -> bool:
+        """Check if text contains profanity (case-insensitive)."""
+        words = re.findall(r'\b\w+\b', text.lower())
+        return any(word in PROFANITY_WORDS for word in words)
+    
+    def is_satire_source(source: str) -> bool:
+        """Check if source domain is known satire."""
+        source_lower = source.lower()
+        return any(satire in source_lower for satire in SATIRE_SOURCES)
+    
     try:
         response = requests.get(url, timeout=5)
         response.raise_for_status()
         data = response.json()
         
-        # Extract abstract/summary if available (1-2 sentences)
+        # Extract abstract/summary if available
         abstract = data.get('AbstractText', '').strip()
-        if abstract:
-            # Truncate to 1-2 sentences for brevity
-            sentences = abstract.split('. ')
-            if len(sentences) > 2:
-                summary = '. '.join(sentences[:2]) + '.'
-            else:
-                summary = abstract
-            return f"Quick answer: {summary}"
+        abstract_source = data.get('AbstractSource', '').strip()
+        abstract_url = data.get('AbstractURL', '')
         
-        # Fallback to topic description
+        # Filter 1: Check for profanity in abstract
+        if abstract and not contains_profanity(abstract):
+            # Filter 2: Check source for satire
+            source_domain = urllib.parse.urlparse(abstract_url).netloc if abstract_url else ''
+            if not is_satire_source(source_domain) and not is_satire_source(abstract_source):
+                # Truncate to 1-2 sentences
+                sentences = abstract.split('. ')
+                if len(sentences) > 2:
+                    summary = '. '.join(sentences[:2]) + '.'
+                else:
+                    summary = abstract
+                return f"Quick answer: {summary} (Source: {abstract_source or 'Web'})"
+        
+        # Fallback: Try topic description
         topic = data.get('Heading', '') or data.get('AbstractSource', '')
-        if topic:
-            return f"Top result: {topic[:150]}..."  # Shorten if too long
+        topic_source = data.get('InfoboxSource', '')
         
-        return "No clear answer found—try rephrasing your query!"
+        if topic and not contains_profanity(topic):
+            source_domain = urllib.parse.urlparse(topic_source).netloc if topic_source else ''
+            if not is_satire_source(source_domain) and not is_satire_source(topic_source):
+                return f"Topic summary: {topic[:150]}... (Source: {topic_source or 'Web'})"
+        
+        # Try RelatedTopics (backup)
+        related = data.get('RelatedTopics', [])
+        for item in related[:3]:  # Check first 3 related topics
+            text = item.get('Text', '') or item.get('FirstURL', '')
+            if text and not contains_profanity(text):
+                source = item.get('Source', '') or ''
+                source_domain = urllib.parse.urlparse(item.get('FirstURL', '')).netloc
+                if not is_satire_source(source_domain) and not is_satire_source(source):
+                    clean_text = text[:150] + '...' if len(text) > 150 else text
+                    return f"Related info: {clean_text} (Source: {source or 'Web'})"
+        
+        return "No clean, reliable sources found for this query."
         
     except Exception as e:
         logger.error(f"Google search error for '{query}': {e}")
