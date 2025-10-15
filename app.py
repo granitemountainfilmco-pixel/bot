@@ -169,15 +169,14 @@ def get_group_share_url() -> Optional[str]:
         return None
 
 def google_search(query: str) -> str:
-    """
-    Search Wikipedia directly and return a 1-2 sentence summary.
-    Uses Wikipedia's REST API to find and summarize articles, with light satire filtering.
-    """
+    import requests, urllib.parse, logging
+    logger = logging.getLogger(__name__)
+
     if not query or len(query.strip()) < 3:
         return "Invalid query—try something longer!"
     
     query_lower = query.lower().strip()
-    encoded_query = urllib.parse.quote(query_lower)
+    encoded_query = urllib.parse.quote(query_lower, safe='')
 
     SATIRE_TITLES = [
         'the onion', 'babylon bee', 'clickhole', 'uncyclopedia', 'satire'
@@ -188,13 +187,12 @@ def google_search(query: str) -> str:
         return any(satire in title_lower for satire in SATIRE_TITLES)
 
     try:
-        # Step 1: Use Wikipedia REST API summary endpoint
         summary_url = f"https://en.wikipedia.org/api/rest_v1/page/summary/{encoded_query}"
-        summary_resp = requests.get(summary_url, timeout=8)
+        headers = {"User-Agent": "Mozilla/5.0 (compatible; GoogleSearchBot/1.0)"}
+        summary_resp = requests.get(summary_url, timeout=8, headers=headers)
         summary_resp.raise_for_status()
         summary_data = summary_resp.json()
 
-        # Check if satire or no extract
         title = summary_data.get('title', '')
         if not title or is_satire_title(title):
             return "No reliable Wikipedia article found—try rephrasing!"
@@ -203,18 +201,15 @@ def google_search(query: str) -> str:
         if not extract:
             return "No summary available for this topic on Wikipedia."
 
-        # Trim to 1–2 sentences
         sentences = extract.split('. ')
-        if len(sentences) > 2:
-            summary = '. '.join(sentences[:2]) + '.'
-        else:
-            summary = extract
+        summary = '. '.join(sentences[:2]) + ('.' if not summary.endswith('.') else '')
 
         return f"Quick answer: {summary} (Source: Wikipedia)"
 
     except Exception as e:
         logger.error(f"Wikipedia search error for '{query}': {e}")
-        return "Search failed—check your connection or try rephrasing."
+        return f"Search failed—{e.__class__.__name__}: {e}"
+
 
 # -----------------------
 # Ban service / ban action
