@@ -1006,12 +1006,12 @@ def webhook():
             if str(user_id) not in ADMIN_IDS:
                 send_system_message(f"> @{sender}: {text}\nError: Only admins can use '!disable' command.")
                 return '', 200
-            if not system_messages_enabled:
-                send_system_message(f"> @{sender}: {text}\nSystem messages are already disabled.")
-            else:
+            if system_messages_enabled:  # Moved after global declaration
                 system_messages_enabled = False
                 save_system_messages_enabled(False)
                 send_system_message(f"> @{sender}: {text}\n✅ System messages disabled (except strikes and bans).")
+            else:
+                send_system_message(f"> @{sender}: {text}\nSystem messages are already disabled.")
             return '', 200
         # Enable system messages (admin only)
         if text_lower.strip() == '!enable':
@@ -1019,12 +1019,12 @@ def webhook():
             if str(user_id) not in ADMIN_IDS:
                 send_system_message(f"> @{sender}: {text}\nError: Only admins can use '!enable' command.")
                 return '', 200
-            if system_messages_enabled:
-                send_system_message(f"> @{sender}: {text}\nSystem messages are already enabled.")
-            else:
+            if not system_messages_enabled:  # Moved after global declaration
                 system_messages_enabled = True
                 save_system_messages_enabled(True)
                 send_system_message(f"> @{sender}: {text}\n✅ System messages enabled.")
+            else:
+                send_system_message(f"> @{sender}: {text}\nSystem messages are already enabled.")
             return '', 200
         # Google search command
         if text_lower.startswith('!google '):
