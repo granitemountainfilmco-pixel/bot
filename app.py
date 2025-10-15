@@ -58,18 +58,15 @@ REGULAR_SWEAR_WORDS = [
 # -----------------------
 # Persistence files
 # -----------------------
-system_messages_enabled_file = "system_messages_enabled.json"  # { "enabled": bool }
-system_messages_enabled = True  # Default to enabled
-
+system_messages_enabled_file = "system_messages_enabled.json" # { "enabled": bool }
+system_messages_enabled = True # Default to enabled
 # Load system messages enabled state
 def load_system_messages_enabled() -> bool:
     data = load_json(system_messages_enabled_file)
     return bool(data.get("enabled", True))
-
 # Save system messages enabled state
 def save_system_messages_enabled(enabled: bool) -> None:
     save_json(system_messages_enabled_file, {"enabled": enabled})
-
 # Initialize system messages enabled state
 system_messages_enabled = load_system_messages_enabled()
 banned_users_file = "banned_users.json" # { user_id_str: username }
@@ -181,21 +178,17 @@ def get_group_share_url() -> Optional[str]:
     except Exception as e:
         logger.error(f"Failed to get group share URL: {e}")
         return None
-
 def google_search(query: str) -> str:
     import requests, urllib.parse, logging
     logger = logging.getLogger(__name__)
-
     if not query or len(query.strip()) < 3:
         return "Invalid query—try something longer!"
-    
+   
     encoded_query = urllib.parse.quote(query.strip(), safe='')
     headers = {"User-Agent": "Mozilla/5.0 (compatible; GoogleSearchBot/1.0)"}
-
     try:
         summary_url = f"https://en.wikipedia.org/api/rest_v1/page/summary/{encoded_query}"
         r = requests.get(summary_url, timeout=8, headers=headers)
-
         if r.status_code == 404:
             search_url = f"https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch={encoded_query}&format=json&utf8=1"
             s = requests.get(search_url, timeout=8, headers=headers)
@@ -206,25 +199,19 @@ def google_search(query: str) -> str:
             best_title = results[0]["title"]
             encoded_best = urllib.parse.quote(best_title, safe='')
             r = requests.get(f"https://en.wikipedia.org/api/rest_v1/page/summary/{encoded_best}", timeout=8, headers=headers)
-
         r.raise_for_status()
         data = r.json()
         extract = data.get("extract", "").strip()
         if not extract:
             return "No summary available for this topic on Wikipedia."
-
         sentences = extract.split('. ')
         summary = '. '.join(sentences[:2])
         if not summary.endswith('.'):
             summary += '.'
-
         return f"Quick answer: {summary} (Source: Wikipedia)"
-
     except Exception as e:
         logger.error(f"Wikipedia search error for '{query}': {e}")
         return f"Search failed—{e.__class__.__name__}: {e}"
-
-
 # -----------------------
 # Ban service / ban action
 # -----------------------
@@ -267,20 +254,17 @@ def fuzzy_find_member(target_alias: str) -> Optional[Tuple[str, str]]:
     Uses strict fuzzy matching, preserves emojis/special characters, and prioritizes
     matches with similar length and all input words present.
     """
-    if not target_alias or len(target_alias.strip()) < 2:  # Prevent very short inputs
+    if not target_alias or len(target_alias.strip()) < 2: # Prevent very short inputs
         logger.debug(f"fuzzy_find_member: Rejected empty or too-short alias '{target_alias}'")
         return None
-
     # Normalize target_alias for comparison (keep emojis/special chars, lowercase for case-insensitive match)
     target_clean = target_alias.strip().lower()
-    target_words = target_clean.split()  # Split into words for containment check
+    target_words = target_clean.split() # Split into words for containment check
     target_length = len(target_clean)
-
     # Helper to check if all target words are in a nickname (case-insensitive, any order)
     def contains_all_words(nickname: str, target_words: List[str]) -> bool:
         nick_words = nickname.lower().split()
         return all(word in nick_words for word in target_words)
-
     # Check if target_alias is a numeric user ID first
     if target_alias.isdigit():
         members = get_group_members()
@@ -296,7 +280,6 @@ def fuzzy_find_member(target_alias: str) -> Optional[Tuple[str, str]]:
         if target_alias in banned_users:
             logger.debug(f"fuzzy_find_member: Found exact banned user ID match for '{target_alias}'")
             return (str(target_alias), banned_users[target_alias])
-
     # Check for exact nickname match in current members (preserving emojis/special chars)
     members = get_group_members()
     nicknames = [m.get("nickname", "") for m in members if m.get("nickname")]
@@ -305,14 +288,13 @@ def fuzzy_find_member(target_alias: str) -> Optional[Tuple[str, str]]:
         if nick.lower() == target_clean:
             logger.debug(f"fuzzy_find_member: Found exact nickname match for '{target_alias}'")
             return (str(m.get("user_id")), nick or "Unknown")
-
     # Fuzzy match with stricter cutoff, prioritizing similar length and all words present
     nick_lower_list = [n.lower() for n in nicknames if n]
     if nick_lower_list:
         match = process.extractOne(target_clean, nick_lower_list, score_cutoff=90, scorer=fuzz.token_sort_ratio)
         if match:
             matched_lower, score, index = match
-            matched_nickname = nicknames[index]  # Get original (non-lowercased) nickname
+            matched_nickname = nicknames[index] # Get original (non-lowercased) nickname
             matched_length = len(matched_nickname)
             logger.debug(f"fuzzy_find_member: Fuzzy match for '{target_alias}' -> '{matched_nickname}' (score: {score}, length: {matched_length})")
             # Verify: contains all target words and length is reasonably close
@@ -325,13 +307,11 @@ def fuzzy_find_member(target_alias: str) -> Optional[Tuple[str, str]]:
             else:
                 logger.debug(f"fuzzy_find_member: Rejected match '{matched_nickname}' (score: {score}, length_ratio: {length_ratio:.2f})")
                 return None
-
     # Fallback: exact nickname match in former_members
     for uid, nick in former_members.items():
         if nick.lower() == target_clean:
             logger.debug(f"fuzzy_find_member: Found exact former member nickname match for '{target_alias}'")
             return (str(uid), nick)
-
     # Fallback: fuzzy match in former_members with similar length and all words present
     if former_members:
         former_nicks = list(former_members.values())
@@ -352,18 +332,15 @@ def fuzzy_find_member(target_alias: str) -> Optional[Tuple[str, str]]:
             else:
                 logger.debug(f"fuzzy_find_member: Rejected former member match '{matched_nickname}' (score: {score}, length_ratio: {length_ratio:.2f})")
                 return None
-
     # Fallback: check banned_users for substring match (preserving emojis)
     for uid, uname in banned_users.items():
         if target_clean in uname.lower() or target_clean == uid:
             logger.debug(f"fuzzy_find_member: Found banned user substring match for '{target_alias}'")
             return (str(uid), uname)
-
     # Reject multi-word inputs with no close match to avoid phrases like "left kidney"
     if len(target_words) > 1:
         logger.debug(f"fuzzy_find_member: Rejected multi-word input '{target_alias}' with no close match")
         return None
-
     logger.debug(f"fuzzy_find_member: No match found for '{target_alias}'")
     return None
 # -----------------------
@@ -895,6 +872,7 @@ start_leaderboard_thread_once()
 @app.route('/webhook', methods=['POST'])
 def webhook():
     try:
+        global system_messages_enabled
         data = request.get_json()
         if not data:
             return '', 200
@@ -1002,11 +980,10 @@ def webhook():
             return '', 200
         # Disable system messages (admin only)
         if text_lower.strip() == '!disable':
-            global system_messages_enabled
             if str(user_id) not in ADMIN_IDS:
                 send_system_message(f"> @{sender}: {text}\nError: Only admins can use '!disable' command.")
                 return '', 200
-            if system_messages_enabled:  # Moved after global declaration
+            if system_messages_enabled:
                 system_messages_enabled = False
                 save_system_messages_enabled(False)
                 send_system_message(f"> @{sender}: {text}\n✅ System messages disabled (except strikes and bans).")
@@ -1015,11 +992,10 @@ def webhook():
             return '', 200
         # Enable system messages (admin only)
         if text_lower.strip() == '!enable':
-            global system_messages_enabled
             if str(user_id) not in ADMIN_IDS:
                 send_system_message(f"> @{sender}: {text}\nError: Only admins can use '!enable' command.")
                 return '', 200
-            if not system_messages_enabled:  # Moved after global declaration
+            if not system_messages_enabled:
                 system_messages_enabled = True
                 save_system_messages_enabled(True)
                 send_system_message(f"> @{sender}: {text}\n✅ System messages enabled.")
@@ -1095,6 +1071,7 @@ def health():
         "status": "healthy" if BOT_ID else "missing config",
         "bot_id": bot_id_brief,
         "bot_name": BOT_NAME,
+        "system_messages_enabled": system_messages_enabled,
         "ban_system": {
             "enabled": bool(GROUP_ID and BAN_SERVICE_URL),
             "group_id": GROUP_ID or "MISSING",
