@@ -58,17 +58,6 @@ REGULAR_SWEAR_WORDS = [
 # -----------------------
 # Persistence files
 # -----------------------
-system_messages_enabled_file = "system_messages_enabled.json" # { "enabled": bool }
-system_messages_enabled = True # Default to enabled
-# Load system messages enabled state
-def load_system_messages_enabled() -> bool:
-    data = load_json(system_messages_enabled_file)
-    return bool(data.get("enabled", True))
-# Save system messages enabled state
-def save_system_messages_enabled(enabled: bool) -> None:
-    save_json(system_messages_enabled_file, {"enabled": enabled})
-# Initialize system messages enabled state
-system_messages_enabled = load_system_messages_enabled()
 banned_users_file = "banned_users.json" # { user_id_str: username }
 former_members_file = "former_members.json" # { user_id_str_or_key: nickname }
 user_swear_counts_file = "user_swear_counts.json" # { user_id_str: int }
@@ -108,6 +97,17 @@ def save_json(file_path: str, data: Dict[str, Any]) -> None:
     except Exception as e:
         logger.error(f"Failed to save {file_path}: {e}")
 # Load persisted data (ensure string keys)
+system_messages_enabled_file = "system_messages_enabled.json" # { "enabled": bool }
+system_messages_enabled = True # Default to enabled
+# Load system messages enabled state
+def load_system_messages_enabled() -> bool:
+    data = load_json(system_messages_enabled_file)
+    return bool(data.get("enabled", True))
+# Save system messages enabled state
+def save_system_messages_enabled(enabled: bool) -> None:
+    save_json(system_messages_enabled_file, {"enabled": enabled})
+# Initialize system messages enabled state
+system_messages_enabled = load_system_messages_enabled()
 banned_users = load_json(banned_users_file) or {}
 user_swear_counts = load_json(user_swear_counts_file) or {}
 former_members = load_json(former_members_file) or {}
