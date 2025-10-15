@@ -171,64 +171,51 @@ def get_group_share_url() -> Optional[str]:
 def google_search(query: str) -> str:
     """
     Search Wikipedia directly and return a 1-2 sentence summary.
-    Uses Wikipedia's API to find and summarize articles, with light satire filtering.
+    Uses Wikipedia's REST API to find and summarize articles, with light satire filtering.
     """
     if not query or len(query.strip()) < 3:
         return "Invalid query—try something longer!"
     
     query_lower = query.lower().strip()
-    encoded_query = urllib.parse.quote(query)
-    
-    # Light satire filter for rare prank articles
+    encoded_query = urllib.parse.quote(query_lower)
+
     SATIRE_TITLES = [
         'the onion', 'babylon bee', 'clickhole', 'uncyclopedia', 'satire'
     ]
-    
+
     def is_satire_title(title: str) -> bool:
-        """Check if article title suggests satire or prank content."""
         title_lower = title.lower()
         return any(satire in title_lower for satire in SATIRE_TITLES)
-    
+
     try:
-        # Step 1: Search Wikipedia for relevant article
-        search_url = f"https://en.wikipedia.org/w/api.php?action=opensearch&search={encoded_query}&limit=1&namespace=0&format=json"
-        search_resp = requests.get(search_url, timeout=5)
-        search_resp.raise_for_status()
-        search_data = search_resp.json()
-        
-        # search_data: [query, [titles], [descriptions], [urls]]
-        titles = search_data[1]
-        if not titles or is_satire_title(titles[0]):
-            return "No reliable Wikipedia article found—try rephrasing!"
-        
-        article_title = titles[0]
-        encoded_title = urllib.parse.quote(article_title)
-        
-        # Step 2: Get summary from article
-        summary_url = f"https://en.wikipedia.org/w/api.php?action=query&prop=extracts&exsentences=3&exintro=1&explaintext=1&titles={encoded_title}&format=json"
-        summary_resp = requests.get(summary_url, timeout=5)
+        # Step 1: Use Wikipedia REST API summary endpoint
+        summary_url = f"https://en.wikipedia.org/api/rest_v1/page/summary/{encoded_query}"
+        summary_resp = requests.get(summary_url, timeout=8)
         summary_resp.raise_for_status()
         summary_data = summary_resp.json()
-        
-        # Extract summary from first page
-        pages = summary_data.get('query', {}).get('pages', {})
-        page = next(iter(pages.values()), {})
-        extract = page.get('extract', '').strip()
-        
+
+        # Check if satire or no extract
+        title = summary_data.get('title', '')
+        if not title or is_satire_title(title):
+            return "No reliable Wikipedia article found—try rephrasing!"
+
+        extract = summary_data.get('extract', '').strip()
         if not extract:
             return "No summary available for this topic on Wikipedia."
-        
-        # Truncate to 1-2 sentences (up to 3 for short, technical topics)
+
+        # Trim to 1–2 sentences
         sentences = extract.split('. ')
         if len(sentences) > 2:
             summary = '. '.join(sentences[:2]) + '.'
         else:
             summary = extract
+
         return f"Quick answer: {summary} (Source: Wikipedia)"
-    
+
     except Exception as e:
         logger.error(f"Wikipedia search error for '{query}': {e}")
         return "Search failed—check your connection or try rephrasing."
+
 # -----------------------
 # Ban service / ban action
 # -----------------------
