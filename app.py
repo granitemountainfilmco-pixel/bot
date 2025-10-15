@@ -179,12 +179,10 @@ def google_search(query: str) -> str:
     headers = {"User-Agent": "Mozilla/5.0 (compatible; GoogleSearchBot/1.0)"}
 
     try:
-        # Try direct summary
         summary_url = f"https://en.wikipedia.org/api/rest_v1/page/summary/{encoded_query}"
         r = requests.get(summary_url, timeout=8, headers=headers)
 
         if r.status_code == 404:
-            # Fallback: search for nearest title
             search_url = f"https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch={encoded_query}&format=json&utf8=1"
             s = requests.get(search_url, timeout=8, headers=headers)
             s.raise_for_status()
@@ -202,7 +200,10 @@ def google_search(query: str) -> str:
             return "No summary available for this topic on Wikipedia."
 
         sentences = extract.split('. ')
-        summary = '. '.join(sentences[:2]) + ('.' if not summary.endswith('.') else '')
+        summary = '. '.join(sentences[:2])
+        if not summary.endswith('.'):
+            summary += '.'
+
         return f"Quick answer: {summary} (Source: Wikipedia)"
 
     except Exception as e:
