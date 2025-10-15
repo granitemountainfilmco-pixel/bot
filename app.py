@@ -4,6 +4,7 @@ import os
 import time
 import logging
 from fuzzywuzzy import process, fuzz
+import urllib.parse
 import json
 import re
 from typing import Dict, Any, Optional, Tuple, List
@@ -166,6 +167,44 @@ def get_group_share_url() -> Optional[str]:
     except Exception as e:
         logger.error(f"Failed to get group share URL: {e}")
         return None
+
+def google_search(query: str) -> str:
+    """
+    Perform a simple web search and return a 1-2 sentence summary.
+    Uses DuckDuckGo's instant answer API for quick, free results.
+    """
+    if not query or len(query.strip()) < 3:
+        return "Invalid query—try something longer!"
+    
+    encoded_query = urllib.parse.quote(query)
+    url = f"https://api.duckduckgo.com/?q={encoded_query}&format=json&no_html=1&skip_disambig=1"
+    
+    try:
+        response = requests.get(url, timeout=5)
+        response.raise_for_status()
+        data = response.json()
+        
+        # Extract abstract/summary if available (1-2 sentences)
+        abstract = data.get('AbstractText', '').strip()
+        if abstract:
+            # Truncate to 1-2 sentences for brevity
+            sentences = abstract.split('. ')
+            if len(sentences) > 2:
+                summary = '. '.join(sentences[:2]) + '.'
+            else:
+                summary = abstract
+            return f"Quick answer: {summary}"
+        
+        # Fallback to topic description
+        topic = data.get('Heading', '') or data.get('AbstractSource', '')
+        if topic:
+            return f"Top result: {topic[:150]}..."  # Shorten if too long
+        
+        return "No clear answer found—try rephrasing your query!"
+        
+    except Exception as e:
+        logger.error(f"Google search error for '{query}': {e}")
+        return "Search failed—check your connection and try again."
 # -----------------------
 # Ban service / ban action
 # -----------------------
@@ -935,6 +974,16 @@ def webhook():
         # Also allow '!strikes' with ID only
         if text_lower.startswith('!strikes') and len(text_lower.split()) == 1:
             send_system_message(f"> @{sender}: {text}\nUsage: !strikes <username or id>")
+            return '', 200
+
+                # Google search command
+        if text_lower.startswith('!google '):
+            search_query = text[len('!google '):].strip()
+            if search_query:
+                summary = google_search(search_query)
+                send_message(f"> {sender}: {text}\n{summary}")
+            else:
+                send_message(f"> {sender}: {text}\nUsage: !google <your question>")
             return '', 200
         # ---------------------
         # VIOLATION CHECKS (swear words etc.)
