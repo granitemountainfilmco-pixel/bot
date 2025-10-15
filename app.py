@@ -686,16 +686,25 @@ def send_system_message(text: str) -> bool:
         logger.error(f"GroupMe system send error: {e}")
         return False
 def send_message(text: str) -> bool:
-    global last_sent_time
+    global last_sent_time, system_messages_enabled
+
+    # 🔇 Global disable check (so !disable mutes everything)
+    if not system_messages_enabled:
+        logger.info(f"Regular message suppressed (system disabled): {text[:80]}")
+        return False
+
     now = time.time()
     if now - last_sent_time < cooldown_seconds:
         logger.info("Regular message cooldown active")
         return False
+
     if not BOT_ID:
         logger.error("No BOT_ID configured - can't send messages")
         return False
+
     url = "https://api.groupme.com/v3/bots/post"
     payload = {"bot_id": BOT_ID, "text": text}
+
     try:
         response = requests.post(url, json=payload, timeout=8)
         response.raise_for_status()
@@ -705,6 +714,7 @@ def send_message(text: str) -> bool:
     except Exception as e:
         logger.error(f"GroupMe send error: {e}")
         return False
+
 # -----------------------
 # System message heuristics
 # -----------------------
