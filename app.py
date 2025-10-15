@@ -58,6 +58,20 @@ REGULAR_SWEAR_WORDS = [
 # -----------------------
 # Persistence files
 # -----------------------
+system_messages_enabled_file = "system_messages_enabled.json"  # { "enabled": bool }
+system_messages_enabled = True  # Default to enabled
+
+# Load system messages enabled state
+def load_system_messages_enabled() -> bool:
+    data = load_json(system_messages_enabled_file)
+    return bool(data.get("enabled", True))
+
+# Save system messages enabled state
+def save_system_messages_enabled(enabled: bool) -> None:
+    save_json(system_messages_enabled_file, {"enabled": enabled})
+
+# Initialize system messages enabled state
+system_messages_enabled = load_system_messages_enabled()
 banned_users_file = "banned_users.json" # { user_id_str: username }
 former_members_file = "former_members.json" # { user_id_str_or_key: nickname }
 user_swear_counts_file = "user_swear_counts.json" # { user_id_str: int }
@@ -666,15 +680,20 @@ def check_for_violations(text: str, user_id: str, username: str) -> bool:
 def send_system_message(text: str) -> bool:
     """
     Send a message through configured bot. Honours cooldown for non-strike messages.
+    Respects system_messages_enabled flag, but allows strike/ban messages to bypass.
     """
-    global last_system_message_time
+    global last_system_message_time, system_messages_enabled
     if not BOT_ID:
         logger.error("No BOT_ID configured - can't send messages")
         return False
-    # Consider messages that include 'Warning' or 'banned' or 'Strike' as strike-like and ignore cooldown
-    is_strike_message = any(k in text for k in ["Warning", "banned", "Strike", "Strike recorded", "strike", "🔨", "⚠️"])
+    # Check if message is strike-related or ban-related (bypass disable flag)
+    is_strike_or_ban_message = any(k in text for k in ["Warning", "banned", "Strike", "🔨", "⚠️"])
+    if not is_strike_or_ban_message and not system_messages_enabled:
+        logger.info(f"System message suppressed (disabled): {text[:80]}")
+        return False
+    # Honour cooldown for non-strike messages
     now = time.time()
-    if not is_strike_message and now - last_system_message_time < cooldown_seconds:
+    if not is_strike_or_ban_message and now - last_system_message_time < cooldown_seconds:
         logger.info("System message cooldown active")
         return False
     url = "https://api.groupme.com/v3/bots/post"
@@ -682,7 +701,7 @@ def send_system_message(text: str) -> bool:
     try:
         response = requests.post(url, json=payload, timeout=8)
         response.raise_for_status()
-        if not is_strike_message:
+        if not is_strike_or_ban_message:
             last_system_message_time = now
         logger.info(f"System message sent: {text[:80]}")
         return True
@@ -980,6 +999,34 @@ def webhook():
         # Also allow '!strikes' with ID only
         if text_lower.startswith('!strikes') and len(text_lower.split()) == 1:
             send_system_message(f"> @{sender}: {text}\nUsage: !strikes <username or id>")
+            return '', 200
+
+                # Disable system messages (admin only)
+        if text_lower.strip() == '!disable':
+            if str(user_id) not in ADMIN_IDS:
+                send_system_message(f"> @{sender}: {text}\nError: Only admins can use '!disable' command.")
+                return '', 200
+            global system_messages_enabled
+            if not system_messages_enabled:
+                send_system_message(f"> @{sender}: {text}\nSystem messages are already disabled.")
+            else:
+                system_messages_enabled = False
+                save_system_messages_enabled(False)
+                send_system_message(f"> @{sender}: {text}\n✅ System messages disabled (except strikes and bans).")
+            return '', 200
+
+        # Enable system messages (admin only)
+        if text_lower.strip() == '!enable':
+            if str(user_id) not in ADMIN_IDS:
+                send_system_message(f"> @{sender}: {text}\nError: Only admins can use '!enable' command.")
+                return '', 200
+            global system_messages_enabled
+            if system_messages_enabled:
+                send_system_message(f"> @{sender}: {text}\nSystem messages are already enabled.")
+            else:
+                system_messages_enabled = True
+                save_system_messages_enabled(True)
+                send_system_message(f"> @{sender}: {text}\n✅ System messages enabled.")
             return '', 200
 
                 # Google search command
