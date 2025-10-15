@@ -170,100 +170,65 @@ def get_group_share_url() -> Optional[str]:
 
 def google_search(query: str) -> str:
     """
-    Perform a filtered web search prioritizing Wikipedia, with lighter filtering.
-    Uses DuckDuckGo's instant answer API for quick, free results.
+    Search Wikipedia directly and return a 1-2 sentence summary.
+    Uses Wikipedia's API to find and summarize articles, with light satire filtering.
     """
     if not query or len(query.strip()) < 3:
         return "Invalid query—try something longer!"
     
     query_lower = query.lower().strip()
-    is_question = query_lower.startswith('what is') or query_lower.startswith('what\'s') or 'what is' in query_lower
-    
-    # Prioritize Wikipedia for definitions/questions
-    if is_question or 'what is' in query_lower:
-        wiki_query = f"{query} site:en.wikipedia.org"
-        encoded_wiki = urllib.parse.quote(wiki_query)
-        wiki_url = f"https://api.duckduckgo.com/?q={encoded_wiki}&format=json&no_html=1&skip_disambig=1"
-        
-        try:
-            wiki_resp = requests.get(wiki_url, timeout=5)
-            wiki_resp.raise_for_status()
-            wiki_data = wiki_resp.json()
-            
-            abstract = wiki_data.get('AbstractText', '').strip()
-            if abstract:
-                # Lighter satire check: only block if source is explicitly satire
-                abstract_url = wiki_data.get('AbstractURL', '')
-                source_domain = urllib.parse.urlparse(abstract_url).netloc if abstract_url else ''
-                if not _is_satire_source(source_domain):
-                    sentences = abstract.split('. ')
-                    if len(sentences) > 3:
-                        summary = '. '.join(sentences[:3]) + '.'  # Up to 3 sentences for better context
-                    else:
-                        summary = abstract
-                    source = wiki_data.get('AbstractSource', 'Wikipedia')
-                    return f"Quick answer: {summary} (Source: {source})"
-        except Exception as e:
-            logger.debug(f"Wikipedia priority search failed for '{query}': {e}")
-    
-    # Fallback to general search (with lighter filtering)
     encoded_query = urllib.parse.quote(query)
-    url = f"https://api.duckduckgo.com/?q={encoded_query}&format=json&no_html=1&skip_disambig=1"
     
-    # Light satire filter only (no profanity check)
-    SATIRE_SOURCES = [
-        'theonion.com', 'babylonbee.com', 'clickhole.com'
+    # Light satire filter for rare prank articles
+    SATIRE_TITLES = [
+        'the onion', 'babylon bee', 'clickhole', 'uncyclopedia', 'satire'
     ]
     
-    def _is_satire_source(source: str) -> bool:
-        """Light check for major satire domains."""
-        source_lower = source.lower()
-        return any(satire in source_lower for satire in SATIRE_SOURCES)
+    def is_satire_title(title: str) -> bool:
+        """Check if article title suggests satire or prank content."""
+        title_lower = title.lower()
+        return any(satire in title_lower for satire in SATIRE_TITLES)
     
     try:
-        response = requests.get(url, timeout=5)
-        response.raise_for_status()
-        data = response.json()
+        # Step 1: Search Wikipedia for relevant article
+        search_url = f"https://en.wikipedia.org/w/api.php?action=opensearch&search={encoded_query}&limit=1&namespace=0&format=json"
+        search_resp = requests.get(search_url, timeout=5)
+        search_resp.raise_for_status()
+        search_data = search_resp.json()
         
-        # Primary: AbstractText (with light satire filter)
-        abstract = data.get('AbstractText', '').strip()
-        if abstract:
-            abstract_url = data.get('AbstractURL', '')
-            source_domain = urllib.parse.urlparse(abstract_url).netloc if abstract_url else ''
-            if not _is_satire_source(source_domain):
-                sentences = abstract.split('. ')
-                if len(sentences) > 3:
-                    summary = '. '.join(sentences[:3]) + '.'
-                else:
-                    summary = abstract
-                source = data.get('AbstractSource', 'Web')
-                return f"Quick answer: {summary} (Source: {source})"
+        # search_data: [query, [titles], [descriptions], [urls]]
+        titles = search_data[1]
+        if not titles or is_satire_title(titles[0]):
+            return "No reliable Wikipedia article found—try rephrasing!"
         
-        # Fallback: Heading/Topic
-        topic = data.get('Heading', '') or data.get('AbstractSource', '')
-        if topic:
-            topic_source = data.get('InfoboxSource', '')
-            source_domain = urllib.parse.urlparse(topic_source).netloc if topic_source else ''
-            if not _is_satire_source(source_domain):
-                clean_topic = topic[:180] + '...' if len(topic) > 180 else topic
-                return f"Topic summary: {clean_topic} (Source: {topic_source or 'Web'})"
+        article_title = titles[0]
+        encoded_title = urllib.parse.quote(article_title)
         
-        # Fallback: RelatedTopics (first clean one)
-        related = data.get('RelatedTopics', [])
-        for item in related[:3]:
-            text = item.get('Text', '') or item.get('FirstURL', '')
-            if text:
-                source = item.get('Source', '') or ''
-                source_domain = urllib.parse.urlparse(item.get('FirstURL', '')).netloc
-                if not _is_satire_source(source_domain) and not _is_satire_source(source):
-                    clean_text = text[:180] + '...' if len(text) > 180 else text
-                    return f"Related info: {clean_text} (Source: {source or 'Web'})"
+        # Step 2: Get summary from article
+        summary_url = f"https://en.wikipedia.org/w/api.php?action=query&prop=extracts&exsentences=3&exintro=1&explaintext=1&titles={encoded_title}&format=json"
+        summary_resp = requests.get(summary_url, timeout=5)
+        summary_resp.raise_for_status()
+        summary_data = summary_resp.json()
         
-        return "No reliable summary found—try rephrasing!"
+        # Extract summary from first page
+        pages = summary_data.get('query', {}).get('pages', {})
+        page = next(iter(pages.values()), {})
+        extract = page.get('extract', '').strip()
         
+        if not extract:
+            return "No summary available for this topic on Wikipedia."
+        
+        # Truncate to 1-2 sentences (up to 3 for short, technical topics)
+        sentences = extract.split('. ')
+        if len(sentences) > 2:
+            summary = '. '.join(sentences[:2]) + '.'
+        else:
+            summary = extract
+        return f"Quick answer: {summary} (Source: Wikipedia)"
+    
     except Exception as e:
-        logger.error(f"Google search error for '{query}': {e}")
-        return "Search failed—check your connection and try again."
+        logger.error(f"Wikipedia search error for '{query}': {e}")
+        return "Search failed—check your connection or try rephrasing."
 # -----------------------
 # Ban service / ban action
 # -----------------------
