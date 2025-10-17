@@ -929,9 +929,17 @@ def webhook():
             return '', 200
         if text_lower.startswith('!ban '):
             target_alias = text[len('!ban '):].strip()
-            if target_alias:
-                ban_user(target_alias, sender, user_id, text)
+        #  Remove a leading '@' if present
+            if target_alias.startswith('@'):
+                target_alias = target_alias[1:].strip()
+        # Remove trailing punctuation like commas or parentheses
+        target_alias = target_alias.strip('.,!?:;')
+        if target_alias:
+            ban_user(target_alias, sender, user_id, text)
+            else:
+                send_system_message(f"> @{sender}: {text}\nUsage: !ban @username")
             return '', 200
+
         if text_lower.startswith('!leaderboard'):
             msg = _build_leaderboard_message(top_n=3)
             send_message(msg)
