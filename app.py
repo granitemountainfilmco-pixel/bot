@@ -293,7 +293,8 @@ def fuzzy_find_member(target_alias: str) -> Optional[Tuple[str, str]]:
     if nick_lower_list:
         match = process.extractOne(target_clean, nick_lower_list, score_cutoff=90, scorer=fuzz.token_sort_ratio)
         if match:
-            matched_lower, score, index = match
+            matched_lower, score = match
+            index = nick_lower_list.index(matched_lower)
             matched_nickname = nicknames[index] # Get original (non-lowercased) nickname
             matched_length = len(matched_nickname)
             logger.debug(f"fuzzy_find_member: Fuzzy match for '{target_alias}' -> '{matched_nickname}' (score: {score}, length: {matched_length})")
@@ -318,7 +319,8 @@ def fuzzy_find_member(target_alias: str) -> Optional[Tuple[str, str]]:
         former_lower = [n.lower() for n in former_nicks]
         match = process.extractOne(target_clean, former_lower, score_cutoff=90, scorer=fuzz.token_sort_ratio)
         if match:
-            matched_lower, score, index = match
+            matched_lower, score = match
+            index = nick_lower_list.index(matched_lower)
             matched_nickname = former_nicks[index]
             matched_length = len(matched_nickname)
             logger.debug(f"fuzzy_find_member: Former member fuzzy match for '{target_alias}' -> '{matched_nickname}' (score: {score}, length: {matched_length})")
