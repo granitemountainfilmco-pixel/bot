@@ -290,32 +290,23 @@ def fuzzy_find_member(target_alias: str) -> Optional[Tuple[str, str]]:
             return (str(m.get("user_id")), nick or "Unknown")
     # Fuzzy match with stricter cutoff, prioritizing similar length and all words present
     nick_lower_list = [n.lower() for n in nicknames if n]
-# Fuzzy match with stricter cutoff, prioritizing similar length and all words present
-nick_lower_list = [n.lower() for n in nicknames if n]
-if nick_lower_list:
-    match = process.extractOne(target_clean, nick_lower_list, score_cutoff=90, scorer=fuzz.token_sort_ratio)
-    if match:
-        if len(match) == 3:
+    if nick_lower_list:
+        match = process.extractOne(target_clean, nick_lower_list, score_cutoff=90, scorer=fuzz.token_sort_ratio)
+        if match:
             matched_lower, score, index = match
-            matched_nickname = nicknames[index]
-        else:
-            matched_lower, score = match
-            matched_nickname = next((n for n in nicknames if n.lower() == matched_lower), None)
-            if not matched_nickname:
-                logger.debug(f"fuzzy_find_member: Could not find original nickname for '{matched_lower}'")
+            matched_nickname = nicknames[index] # Get original (non-lowercased) nickname
+            matched_length = len(matched_nickname)
+            logger.debug(f"fuzzy_find_member: Fuzzy match for '{target_alias}' -> '{matched_nickname}' (score: {score}, length: {matched_length})")
+            # Verify: contains all target words and length is reasonably close
+            length_ratio = min(matched_length, target_length) / max(matched_length, target_length)
+            if (contains_all_words(matched_nickname, target_words) and
+                (length_ratio >= 0.7 or score >= 95)):
+                for m in members:
+                    if m.get("nickname", "").lower() == matched_lower:
+                        return (str(m.get("user_id")), m.get("nickname") or "Unknown")
+            else:
+                logger.debug(f"fuzzy_find_member: Rejected match '{matched_nickname}' (score: {score}, length_ratio: {length_ratio:.2f})")
                 return None
-        matched_length = len(matched_nickname)
-        logger.debug(f"fuzzy_find_member: Fuzzy match for '{target_alias}' -> '{matched_nickname}' (score: {score}, length: {matched_length})")
-        # Verify: contains all target words and length is reasonably close
-        length_ratio = min(matched_length, target_length) / max(matched_length, target_length)
-        if (contains_all_words(matched_nickname, target_words) and
-            (length_ratio >= 0.7 or score >= 95)):
-            for m in members:
-                if m.get("nickname", "").lower() == matched_lower:
-                    return (str(m.get("user_id")), m.get("nickname") or "Unknown")
-        else:
-            logger.debug(f"fuzzy_find_member: Rejected match '{matched_nickname}' (score: {score}, length_ratio: {length_ratio:.2f})")
-            return None
     # Fallback: exact nickname match in former_members
     for uid, nick in former_members.items():
         if nick.lower() == target_clean:
