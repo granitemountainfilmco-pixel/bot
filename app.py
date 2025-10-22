@@ -852,7 +852,7 @@ def webhook():
                     key = user_id or f"ghost-{sender}"
                     former_members[str(key)] = sender
                     save_json(former_members_file, former_members)
-                    send_system_message("Russian")
+                    send_system_message("GAY")
                 elif 'has joined the group' in text_lower:
                     send_system_message("Welcome to Clean Memes, check the rules and announcement topics before chatting!")
                 elif 'was removed from the group' in text_lower or 'removed' in text_lower:
