@@ -1029,7 +1029,7 @@ def webhook():
         elif 'cooper is my pookie' in text_lower:
             send_message("me too bro")
         elif 'wrx is tall' in text_lower:
-            send_message("HAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
+            send_message("Wrx considers a chihuahua to be a large dog")
         elif 'https:' in text and not any(att.get("type") == "video" for att in attachments):
             send_message("Delete this, links are not allowed, admins have been notified")
         elif 'france' in text_lower:
