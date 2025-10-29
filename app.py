@@ -906,6 +906,38 @@ def webhook():
             else:
                 send_system_message(f"> @{sender}: {text}\nFailed to delete. (Too old or already gone?)")
             return '', 200
+
+                # --- !clear @username: Reset strikes to 0 (admin only) ---
+        if text_lower.startswith('!clear '):
+            if str(user_id) not in ADMIN_IDS:
+                send_system_message(f"> @{sender}: {text}\nError: Only admins can use '!clear'.")
+                return '', 200
+
+            target_alias = text[len('!clear '):].strip().lstrip('@')
+            if not target_alias:
+                send_system_message(f"> @{sender}: {text}\nUsage: `!clear @username`")
+                return '', 200
+
+            result = fuzzy_find_member(target_alias)
+            if not result:
+                send_system_message(f"> @{sender}: {text}\nNo user found matching '@{target_alias}'.")
+                return '', 200
+
+            target_user_id, target_nickname = result
+            target_user_id = str(target_user_id)
+
+            old_count = user_strikes.get(target_user_id, 0)
+            if old_count == 0:
+                send_system_message(f"> @{sender}: {text}\n{target_nickname} has no strikes to clear.")
+                return '', 200
+
+            user_strikes[target_user_id] = 0
+            save_json(strikes_file, user_strikes)
+
+            send_system_message(f"> @{sender}: {text}\n{target_nickname}'s strikes cleared: `{old_count} → 0`")
+            logger.info(f"Strikes cleared for {target_nickname} ({target_user_id}) by {sender}")
+            return '', 200
+            
         # Violation Check
         if user_id and text and message_id:
             check_for_violations(text, user_id, sender, str(message_id))
