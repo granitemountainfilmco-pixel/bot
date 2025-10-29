@@ -70,6 +70,7 @@ user_swear_counts: Dict[str, int] = {}
 banned_users: Dict[str, str] = {}
 former_members: Dict[str, str] = {}
 user_strikes: Dict[str, int] = {}
+muted_users: Dict[str, int] = {}
 daily_message_counts: Dict[str, int] = {}
 last_message_by_user: Dict[str, str] = {}
 daily_counts_date: Optional[str] = None
@@ -562,32 +563,57 @@ def get_strikes_report(target_alias: str, requester_name: str, requester_id: str
 # Violation Detection with Deletion
 # -----------------------
 def check_for_violations(text: str, user_id: str, username: str, message_id: str) -> bool:
-    text_lower = text.lower()
-    text_words = text_lower.split()
+    """
+    Check for muted users first, then swears/instant bans.
+    Deletes message + sends warning if muted or violation.
+    """
+    uid = str(user_id)
+    now = time.time()
     deleted = False
 
+    # === MUTE CHECK: Auto-delete if user is muted ===
+    if uid in muted_users and now < muted_users[uid]:
+        minutes_left = int((muted_users[uid] - now) / 60) + 1
+        if delete_message(message_id):
+            send_system_message(f"muted {username} — {minutes_left} min left. Message deleted.")
+            logger.info(f"MUTED MSG DELETED: {username} ({uid}), {minutes_left}m left")
+            deleted = True
+        return deleted  # Skip swear checks
+
+    # === Clean expired mutes ===
+    expired = [u for u, until in list(muted_users.items()) if now >= until]
+    for u in expired:
+        del muted_users[u]
+    if expired:
+        logger.info(f"Cleaned {len(expired)} expired mutes")
+
+    # === Instant Ban Words ===
+    text_lower = text.lower()
+    text_words = text_lower.split()
     for word in text_words:
         clean_word = word.strip('.,!?"\'()[]{}').lower()
         if clean_word in INSTANT_BAN_WORDS:
             logger.info(f"INSTANT BAN: '{clean_word}' from {username} (msg {message_id})")
             delete_message(message_id)
-            success = call_ban_service(user_id, username, f"Instant ban: {clean_word}")
+            success = call_ban_service(uid, username, f"Instant ban: {clean_word}")
             if success:
                 send_system_message(f"{username} has been permanently banned for using prohibited language. (Message deleted)")
             deleted = True
             return True
 
+    # === Regular Swear Words (Strike System) ===
     for word in text_words:
         clean_word = word.strip('.,!?"\'()[]{}').lower()
         if clean_word in REGULAR_SWEAR_WORDS:
-            uid = str(user_id)
             if uid not in user_swear_counts:
                 user_swear_counts[uid] = 0
             user_swear_counts[uid] += 1
             save_json(user_swear_counts_file, user_swear_counts)
             current_count = user_swear_counts[uid]
             logger.info(f"{username} swear count: {current_count}/10 (msg {message_id})")
+            
             delete_message(message_id)
+            
             if current_count >= 10:
                 success = call_ban_service(uid, username, f"10 strikes - swear words")
                 if success:
@@ -600,7 +626,8 @@ def check_for_violations(text: str, user_id: str, username: str, message_id: str
                 remaining = 10 - current_count
                 send_system_message(f"{username} ({uid}) - Warning {current_count}/10 for inappropriate language. {remaining} more and you're banned! (Message deleted)")
             deleted = True
-            break
+            break  # Only one swear per message
+
     return deleted
 
 # -----------------------
@@ -938,60 +965,54 @@ def webhook():
             logger.info(f"Strikes cleared for {target_nickname} ({target_user_id}) by {sender}")
             return '', 200
 
-                # --- !mute @username [minutes]: Silence user (admin only) ---
-        if text_lower.startswith('!mute '):
+        # --- !mute @username [minutes] | !unmute @username (in-memory, resets on restart) ---
+        if text_lower.startswith('!mute ') or text_lower.startswith('!unmute '):
             if str(user_id) not in ADMIN_IDS:
-                send_system_message(f"> @{sender}: {text}\nError: Only admins can use '!mute'.")
+                send_system_message(f"> @{sender}: {text}\nError: Only admins can use mute commands.")
                 return '', 200
 
-            parts = text[len('!mute '):].strip().split()
+            is_mute = text_lower.startswith('!mute ')
+            command = '!mute' if is_mute else '!unmute'
+            parts = text[len(command):].strip().split()
             if len(parts) < 1:
-                send_system_message(f"> @{sender}: {text}\nUsage: `!mute @username [minutes]` (1–1440)")
+                send_system_message(f"> @{sender}: {text}\nUsage: `{command} @username [minutes]` (1–1440, default 5)")
                 return '', 200
 
             target_alias = parts[0].lstrip('@')
-            minutes = 5  # default
-            if len(parts) > 1:
-                try:
-                    minutes = int(parts[1])
-                    if not 1 <= minutes <= 1440:
-                        send_system_message(f"> @{sender}: {text}\nMinutes must be 1–1440.")
-                        return '', 200
-                except ValueError:
-                    send_system_message(f"> @{sender}: {text}\nInvalid minutes. Use a number.")
-                    return '', 200
-
             result = fuzzy_find_member(target_alias)
             if not result:
-                send_system_message(f"> @{sender}: {text}\nNo user found matching '@{target_alias}'.")
+                send_system_message(f"> @{sender}: {text}\nUser not found: @{target_alias}")
                 return '', 200
 
             target_user_id, target_nickname = result
             target_user_id = str(target_user_id)
 
-            # Get membership ID
-            membership_id = get_user_membership_id(target_user_id)
-            if not membership_id:
-                send_system_message(f"> @{sender}: {text}\nFailed to find {target_nickname} in group.")
-                return '', 200
+            if is_mute:
+                # --- MUTE ---
+                minutes = 5
+                if len(parts) > 1:
+                    try:
+                        minutes = int(parts[1])
+                        if not 1 <= minutes <= 1440:
+                            send_system_message(f"> @{sender}: {text}\nMinutes: 1–1440 only.")
+                            return '', 200
+                    except ValueError:
+                        send_system_message(f"> @{sender}: {text}\nInvalid minutes.")
+                        return '', 200
 
-            # Calculate mute until (UTC)
-            mute_until = int(time.time()) + (minutes * 60)
+                mute_until = int(time.time()) + (minutes * 60)
+                muted_users[target_user_id] = mute_until
+                send_system_message(f"> @{sender}: {text}\n{target_nickname} muted for {minutes} min. Messages will be deleted.")
+                logger.info(f"MUTED: {target_nickname} ({target_user_id}) for {minutes}m by {sender}")
+            else:
+                # --- UNMUTE ---
+                if target_user_id not in muted_users:
+                    send_system_message(f"> @{sender}: {text}\n{target_nickname} is not muted.")
+                    return '', 200
+                del muted_users[target_user_id]
+                send_system_message(f"> @{sender}: {text}\n{target_nickname} unmuted.")
+                logger.info(f"UNMUTED: {target_nickname} ({target_user_id}) by {sender}")
 
-            url = f"{GROUPME_API}/groups/{GROUP_ID}/members/{membership_id}/mute?token={ACCESS_TOKEN}"
-            payload = {"muted_until": mute_until}
-
-            try:
-                response = requests.post(url, json=payload, timeout=8)
-                if response.status_code == 200:
-                    send_system_message(f"> @{sender}: {text}\n{target_nickname} muted for {minutes} minute(s).")
-                    logger.info(f"Muted {target_nickname} ({target_user_id}) for {minutes}m by {sender}")
-                else:
-                    send_system_message(f"> @{sender}: {text}\nFailed to mute: {response.status_code}")
-                    logger.error(f"Mute failed: {response.text}")
-            except Exception as e:
-                send_system_message(f"> @{sender}: {text}\nMute error: {str(e)}")
-                logger.exception("Mute error")
             return '', 200
             
         # Violation Check
