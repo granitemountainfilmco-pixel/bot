@@ -885,17 +885,27 @@ def webhook():
             if query:
                 send_message(f"> {sender}: {text}\n{google_search(query)}")
             return '', 200
-        if text_lower.startswith('!deletemsg '):
+        # --- !delete: Reply to a message and type "!delete" to remove it (admin only) ---
+        if text_lower.strip() == '!delete':
             if str(user_id) not in ADMIN_IDS:
-                send_system_message(f"> @{sender}: {text}\nError: Only admins can delete messages.")
+                send_system_message(f"> @{sender}: {text}\nError: Only admins can use '!delete'.")
                 return '', 200
-            msg_id = text[len('!deletemsg '):].strip()
-            if msg_id and delete_message(msg_id):
-                send_system_message(f"> @{sender}: {text}\nMessage {msg_id} deleted.")
-            else:
-                send_system_message(f"> @{sender}: {text}\nFailed to delete message {msg_id}.")
-            return '', 200
 
+            reply_id = None
+            for att in attachments:
+                if att.get("type") == "reply" and att.get("reply_id"):
+                    reply_id = att["reply_id"]
+                    break
+
+            if not reply_id:
+                send_system_message(f"> @{sender}: {text}\nError: You must *reply* to a message to use '!delete'.")
+                return '', 200
+
+            if delete_message(reply_id):
+                send_system_message(f"> @{sender}: {text}\nMessage deleted.")
+            else:
+                send_system_message(f"> @{sender}: {text}\nFailed to delete. (Too old or already gone?)")
+            return '', 200
         # Violation Check
         if user_id and text and message_id:
             check_for_violations(text, user_id, sender, str(message_id))
