@@ -575,7 +575,6 @@ def check_for_violations(text: str, user_id: str, username: str, message_id: str
     if uid in muted_users and now < muted_users[uid]:
         minutes_left = int((muted_users[uid] - now) / 60) + 1
         if delete_message(message_id):
-            send_system_message(f"muted {username} — {minutes_left} min left. Message deleted.")
             logger.info(f"MUTED MSG DELETED: {username} ({uid}), {minutes_left}m left")
             deleted = True
         return deleted  # Skip swear checks
