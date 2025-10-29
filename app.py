@@ -965,20 +965,35 @@ def webhook():
             logger.info(f"Strikes cleared for {target_nickname} ({target_user_id}) by {sender}")
             return '', 200
 
-        # --- !mute @username [minutes] | !unmute @username (in-memory, resets on restart) ---
+        # --- !mute @username [minutes] | !unmute @username (in-memory) ---
         if text_lower.startswith('!mute ') or text_lower.startswith('!unmute '):
             if str(user_id) not in ADMIN_IDS:
                 send_system_message(f"> @{sender}: {text}\nError: Only admins can use mute commands.")
                 return '', 200
 
             is_mute = text_lower.startswith('!mute ')
-            command = '!mute' if is_mute else '!unmute'
-            parts = text[len(command):].strip().split()
-            if len(parts) < 1:
-                send_system_message(f"> @{sender}: {text}\nUsage: `{command} @username [minutes]` (1–1440, default 5)")
+            command = 'mute' if is_mute else 'unmute'
+            rest = text[len(f'!{command} '):].strip()  # Everything after !mute or !unmute
+
+            if not rest:
+                send_system_message(f"> @{sender}: {text}\nUsage: `!{command} @username [minutes]`")
                 return '', 200
 
+            # Split into username and optional minutes
+            parts = rest.rsplit(maxsplit=1)  # Split from RIGHT, max 1 time
             target_alias = parts[0].lstrip('@')
+            minutes = 5  # default
+
+            if len(parts) > 1:
+                try:
+                    minutes = int(parts[1])
+                    if not 1 <= minutes <= 1440:
+                        send_system_message(f"> @{sender}: {text}\nMinutes must be 1–1440.")
+                        return '', 200
+                except ValueError:
+                    send_system_message(f"> @{sender}: {text}\nInvalid minutes. Use a number.")
+                    return '', 200
+
             result = fuzzy_find_member(target_alias)
             if not result:
                 send_system_message(f"> @{sender}: {text}\nUser not found: @{target_alias}")
@@ -988,30 +1003,17 @@ def webhook():
             target_user_id = str(target_user_id)
 
             if is_mute:
-                # --- MUTE ---
-                minutes = 5
-                if len(parts) > 1:
-                    try:
-                        minutes = int(parts[1])
-                        if not 1 <= minutes <= 1440:
-                            send_system_message(f"> @{sender}: {text}\nMinutes: 1–1440 only.")
-                            return '', 200
-                    except ValueError:
-                        send_system_message(f"> @{sender}: {text}\nInvalid minutes.")
-                        return '', 200
-
                 mute_until = int(time.time()) + (minutes * 60)
                 muted_users[target_user_id] = mute_until
-                send_system_message(f"> @{sender}: {text}\n{target_nickname} muted for {minutes} min. Messages will be deleted.")
-                logger.info(f"MUTED: {target_nickname} ({target_user_id}) for {minutes}m by {sender}")
+                send_system_message(f"> @{sender}: {text}\n{target_nickname} muted for {minutes} min. Messages deleted.")
+                logger.info(f"MUTED: {target_nickname} ({target_user_id}) for {minutes}m")
             else:
-                # --- UNMUTE ---
                 if target_user_id not in muted_users:
                     send_system_message(f"> @{sender}: {text}\n{target_nickname} is not muted.")
                     return '', 200
                 del muted_users[target_user_id]
                 send_system_message(f"> @{sender}: {text}\n{target_nickname} unmuted.")
-                logger.info(f"UNMUTED: {target_nickname} ({target_user_id}) by {sender}")
+                logger.info(f"UNMUTED: {target_nickname} ({target_user_id})")
 
             return '', 200
             
