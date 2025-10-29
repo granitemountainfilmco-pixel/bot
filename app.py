@@ -1025,6 +1025,8 @@ def webhook():
             send_message("We're the best!")
         elif 'wsg' in text_lower:
             send_message("God is good")
+        elif '!kill' in text_lower:
+            send_message("Error: Only God himself can use this command")
         elif 'cooper is my pookie' in text_lower:
             send_message("me too bro")
         elif 'https:' in text and not any(att.get("type") == "video" for att in attachments):
