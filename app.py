@@ -937,6 +937,62 @@ def webhook():
             send_system_message(f"> @{sender}: {text}\n{target_nickname}'s strikes cleared: `{old_count} → 0`")
             logger.info(f"Strikes cleared for {target_nickname} ({target_user_id}) by {sender}")
             return '', 200
+
+                # --- !mute @username [minutes]: Silence user (admin only) ---
+        if text_lower.startswith('!mute '):
+            if str(user_id) not in ADMIN_IDS:
+                send_system_message(f"> @{sender}: {text}\nError: Only admins can use '!mute'.")
+                return '', 200
+
+            parts = text[len('!mute '):].strip().split()
+            if len(parts) < 1:
+                send_system_message(f"> @{sender}: {text}\nUsage: `!mute @username [minutes]` (1–1440)")
+                return '', 200
+
+            target_alias = parts[0].lstrip('@')
+            minutes = 5  # default
+            if len(parts) > 1:
+                try:
+                    minutes = int(parts[1])
+                    if not 1 <= minutes <= 1440:
+                        send_system_message(f"> @{sender}: {text}\nMinutes must be 1–1440.")
+                        return '', 200
+                except ValueError:
+                    send_system_message(f"> @{sender}: {text}\nInvalid minutes. Use a number.")
+                    return '', 200
+
+            result = fuzzy_find_member(target_alias)
+            if not result:
+                send_system_message(f"> @{sender}: {text}\nNo user found matching '@{target_alias}'.")
+                return '', 200
+
+            target_user_id, target_nickname = result
+            target_user_id = str(target_user_id)
+
+            # Get membership ID
+            membership_id = get_user_membership_id(target_user_id)
+            if not membership_id:
+                send_system_message(f"> @{sender}: {text}\nFailed to find {target_nickname} in group.")
+                return '', 200
+
+            # Calculate mute until (UTC)
+            mute_until = int(time.time()) + (minutes * 60)
+
+            url = f"{GROUPME_API}/groups/{GROUP_ID}/members/{membership_id}/mute?token={ACCESS_TOKEN}"
+            payload = {"muted_until": mute_until}
+
+            try:
+                response = requests.post(url, json=payload, timeout=8)
+                if response.status_code == 200:
+                    send_system_message(f"> @{sender}: {text}\n{target_nickname} muted for {minutes} minute(s).")
+                    logger.info(f"Muted {target_nickname} ({target_user_id}) for {minutes}m by {sender}")
+                else:
+                    send_system_message(f"> @{sender}: {text}\nFailed to mute: {response.status_code}")
+                    logger.error(f"Mute failed: {response.text}")
+            except Exception as e:
+                send_system_message(f"> @{sender}: {text}\nMute error: {str(e)}")
+                logger.exception("Mute error")
+            return '', 200
             
         # Violation Check
         if user_id and text and message_id:
