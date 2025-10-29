@@ -13,12 +13,12 @@ from datetime import datetime, timedelta
 
 app = Flask(__name__)
 
-# --- MERGED CONFIG (from both scripts) ---
+# --- MERGED CONFIG ---
 ACCESS_TOKEN = os.getenv("ACCESS_TOKEN")  # Shared: GroupMe API token
 GROUP_ID = os.getenv("GROUP_ID")  # Shared: Group ID
 BOT_ID = os.getenv("BOT_ID")
 BOT_NAME = os.getenv("BOT_NAME", "ClankerBot")
-PORT = int(os.getenv("PORT", 5000))  # Unified port (Render will set this)
+PORT = int(os.getenv("PORT", 5000))
 SELF_PING = os.getenv("KEEP_ALIVE_SELF_PING", "true").lower() in ("1", "true", "yes")
 ADMIN_IDS = [
     '119189324', '82717917', '124068433', '103258964', '123259855',
@@ -27,7 +27,8 @@ ADMIN_IDS = [
     '117776217', '85166615', '114066399', '84254355', '115866991', '124523409',
     '125629030', '124579254'
 ]
-# Swear word categories (from app.py)
+
+# Swear word categories
 INSTANT_BAN_WORDS = [
     'nigger', 'nigga', 'n1gger', 'n1gga', 'nigg', 'n1gg', 'nigha',
 ]
@@ -47,23 +48,24 @@ REGULAR_SWEAR_WORDS = [
     'nevergonnagiveyouupnevergonnaletyoudown',
     '67', '6-7', '6 7', 'bullshit', 'maggot'
 ]
-# Persistence files (from app.py)
-banned_users_file = "banned_users.json"  # { user_id_str: username }
-former_members_file = "former_members.json"  # { user_id_str_or_key: nickname }
-user_swear_counts_file = "user_swear_counts.json"  # { user_id_str: int }
-strikes_file = "user_strikes.json"  # { user_id_str: int }
-daily_counts_file = "daily_message_counts.json"  # { "date": "YYYY-MM-DD", "counts": { user_id: int } }
-last_messages_file = "last_messages.json"  # { "date": "YYYY-MM-DD", "last": { user_id: last_message_text } }
-system_messages_enabled_file = "system_messages_enabled.json"  # { "enabled": bool }
 
-# Set up logging (merged)
+# Persistence files
+banned_users_file = "banned_users.json"
+former_members_file = "former_members.json"
+user_swear_counts_file = "user_swear_counts.json"
+strikes_file = "user_strikes.json"
+daily_counts_file = "daily_message_counts.json"
+last_messages_file = "last_messages.json"
+system_messages_enabled_file = "system_messages_enabled.json"
+
+# Logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 GROUPME_API = "https://api.groupme.com/v3"
 API_URL = "https://api.groupme.com/v3"
 
-# In-memory caches (from app.py)
+# In-memory caches
 user_swear_counts: Dict[str, int] = {}
 banned_users: Dict[str, str] = {}
 former_members: Dict[str, str] = {}
@@ -74,13 +76,13 @@ daily_counts_date: Optional[str] = None
 last_messages_date: Optional[str] = None
 system_messages_enabled = True
 
-# Cooldown / rate-limiting (from app.py)
+# Cooldown
 last_sent_time = 0.0
 last_system_message_time = 0.0
 cooldown_seconds = 10
 
 # -----------------------
-# Helpers for JSON load/save (from app.py)
+# JSON Helpers
 # -----------------------
 def load_json(file_path: str) -> Dict[str, Any]:
     if os.path.exists(file_path):
@@ -101,7 +103,6 @@ def save_json(file_path: str, data: Dict[str, Any]) -> None:
     except Exception as e:
         logger.error(f"Failed to save {file_path}: {e}")
 
-# Load system messages enabled state (from app.py)
 def load_system_messages_enabled() -> bool:
     data = load_json(system_messages_enabled_file)
     return bool(data.get("enabled", True))
@@ -109,14 +110,16 @@ def load_system_messages_enabled() -> bool:
 def save_system_messages_enabled(enabled: bool) -> None:
     save_json(system_messages_enabled_file, {"enabled": enabled})
 
-# Initialize persisted data
+# Initialize
 system_messages_enabled = load_system_messages_enabled()
 banned_users = load_json(banned_users_file) or {}
 user_swear_counts = load_json(user_swear_counts_file) or {}
 former_members = load_json(former_members_file) or {}
 user_strikes = load_json(strikes_file) or {}
 
-# Initialize daily tracking (from app.py)
+# -----------------------
+# Daily Tracking Init
+# -----------------------
 def _initialize_daily_tracking():
     global daily_message_counts, last_message_by_user, daily_counts_date, last_messages_date
     today = datetime.now().strftime("%Y-%m-%d")
@@ -144,15 +147,14 @@ def _initialize_daily_tracking():
 _initialize_daily_tracking()
 
 # -----------------------
-# Ban Functions (from ban_service.py, integrated)
+# Ban Functions
 # -----------------------
 def get_user_membership_id(user_id):
-    """Get the membership ID for a user in the group"""
     try:
         url = f"{GROUPME_API}/groups/{GROUP_ID}?token={ACCESS_TOKEN}"
         response = requests.get(url, timeout=8)
         if response.status_code == 401:
-            logger.error("❌ ACCESS TOKEN INVALID OR EXPIRED - Regenerate your token at https://dev.groupme.com/!")
+            logger.error("ACCESS TOKEN INVALID OR EXPIRED - Regenerate your token at https://dev.groupme.com/!")
             return None
         elif response.status_code != 200:
             logger.error(f"Failed to get group info: {response.status_code} - {response.text}")
@@ -171,7 +173,6 @@ def get_user_membership_id(user_id):
         return None
 
 def ban_user(user_id, username, reason):
-    """Remove a user from the group (ban them)"""
     try:
         membership_id = get_user_membership_id(user_id)
         if not membership_id:
@@ -180,20 +181,16 @@ def ban_user(user_id, username, reason):
         url = f"{GROUPME_API}/groups/{GROUP_ID}/members/{membership_id}/remove?token={ACCESS_TOKEN}"
         response = requests.post(url, timeout=8)
         if response.status_code == 200:
-            logger.info(f"✅ Successfully banned {username} ({user_id}) - {reason}")
+            logger.info(f"Successfully banned {username} ({user_id}) - {reason}")
             return True
         else:
-            logger.error(f"❌ Ban failed {response.status_code}: {response.text}")
+            logger.error(f"Ban failed {response.status_code}: {response.text}")
             return False
     except Exception as e:
-        logger.exception(f"❌ Ban error for {username} ({user_id}): {e}")
+        logger.exception(f"Ban error for {username} ({user_id}): {e}")
         return False
 
-# -----------------------
-# Updated call_ban_service (calls ban_user directly)
-# -----------------------
 def call_ban_service(user_id: str, username: str, reason: str) -> bool:
-    """Call internal ban_user function and update persistence"""
     success = ban_user(user_id, username, reason)
     if success:
         banned_users[str(user_id)] = username
@@ -203,10 +200,30 @@ def call_ban_service(user_id: str, username: str, reason: str) -> bool:
     return success
 
 # -----------------------
-# Group API helpers (from app.py)
+# Message Deletion (Community API)
+# -----------------------
+def delete_message(message_id: str) -> bool:
+    """Delete a message using the community API endpoint."""
+    if not ACCESS_TOKEN or not GROUP_ID:
+        logger.error("Missing ACCESS_TOKEN or GROUP_ID for message deletion")
+        return False
+    url = f"{GROUPME_API}/conversations/{GROUP_ID}/messages/{message_id}?token={ACCESS_TOKEN}"
+    try:
+        response = requests.delete(url, timeout=8)
+        if response.status_code == 204:
+            logger.info(f"Deleted message {message_id}")
+            return True
+        else:
+            logger.error(f"Delete failed for {message_id}: {response.status_code} - {response.text}")
+            return False
+    except Exception as e:
+        logger.exception(f"Delete message error for {message_id}: {e}")
+        return False
+
+# -----------------------
+# Group API Helpers
 # -----------------------
 def get_group_members() -> List[Dict[str, Any]]:
-    """Return list of group members (each dict has keys like nickname, user_id)."""
     if not ACCESS_TOKEN or not GROUP_ID:
         logger.error("Missing ACCESS_TOKEN or GROUP_ID for group members")
         return []
@@ -238,7 +255,6 @@ def get_group_share_url() -> Optional[str]:
         return None
 
 def google_search(query: str) -> str:
-    """Perform a Wikipedia-based search for a query"""
     if not query or len(query.strip()) < 3:
         return "Invalid query—try something longer!"
     encoded_query = urllib.parse.quote(query.strip(), safe='')
@@ -271,15 +287,10 @@ def google_search(query: str) -> str:
         return f"Search failed—{e.__class__.__name__}: {e}"
 
 # -----------------------
-# Fuzzy find member (from app.py)
+# Fuzzy Member Search
 # -----------------------
 def fuzzy_find_member(target_alias: str) -> Optional[Tuple[str, str]]:
-    """
-    Returns tuple (user_id_str, nickname) if found, otherwise None.
-    Tries active members first, then former_members, then banned_users.
-    """
     if not target_alias or len(target_alias.strip()) < 2:
-        logger.debug(f"fuzzy_find_member: Rejected empty or too-short alias '{target_alias}'")
         return None
     target_clean = target_alias.strip().lower()
     target_words = target_clean.split()
@@ -289,7 +300,6 @@ def fuzzy_find_member(target_alias: str) -> Optional[Tuple[str, str]]:
         nick_words = nickname.lower().split()
         return all(word in nick_words for word in target_words)
 
-    # Check if target_alias is a numeric user ID
     if target_alias.isdigit():
         members = get_group_members()
         for m in members:
@@ -300,7 +310,6 @@ def fuzzy_find_member(target_alias: str) -> Optional[Tuple[str, str]]:
         if target_alias in banned_users:
             return (str(target_alias), banned_users[target_alias])
 
-    # Check for exact nickname match in current members
     members = get_group_members()
     nicknames = [m.get("nickname", "") for m in members if m.get("nickname")]
     for m in members:
@@ -308,7 +317,6 @@ def fuzzy_find_member(target_alias: str) -> Optional[Tuple[str, str]]:
         if nick.lower() == target_clean:
             return (str(m.get("user_id")), nick or "Unknown")
 
-    # Fuzzy match with stricter cutoff
     nick_lower_list = [n.lower() for n in nicknames if n]
     if nick_lower_list:
         match = process.extractOne(target_clean, nick_lower_list, score_cutoff=90, scorer=fuzz.token_sort_ratio)
@@ -324,12 +332,10 @@ def fuzzy_find_member(target_alias: str) -> Optional[Tuple[str, str]]:
                     if m.get("nickname", "").lower() == matched_lower:
                         return (str(m.get("user_id")), m.get("nickname") or "Unknown")
 
-    # Fallback: exact nickname match in former_members
     for uid, nick in former_members.items():
         if nick.lower() == target_clean:
             return (str(uid), nick)
 
-    # Fallback: fuzzy match in former_members
     if former_members:
         former_nicks = list(former_members.values())
         former_lower = [n.lower() for n in former_nicks]
@@ -346,53 +352,39 @@ def fuzzy_find_member(target_alias: str) -> Optional[Tuple[str, str]]:
                     if v.lower() == matched_lower:
                         return (str(k), v)
 
-    # Fallback: check banned_users for substring match
     for uid, uname in banned_users.items():
         if target_clean in uname.lower() or target_clean == uid:
             return (str(uid), uname)
 
     if len(target_words) > 1:
-        logger.debug(f"fuzzy_find_member: Rejected multi-word input '{target_alias}' with no close match")
         return None
     return None
 
 # -----------------------
-# User ID helper (from app.py)
+# Admin Commands
 # -----------------------
 def get_user_id(target_alias: str, sender_name: str, sender_id: str, original_text: str) -> bool:
-    """Admin-only command to find a user's user_id"""
     if str(sender_id) not in ADMIN_IDS:
         send_system_message(f"> @{sender_name}: {original_text}\nError: Only admins can use this command")
         return False
     if not ACCESS_TOKEN or not GROUP_ID:
         send_system_message(f"> @{sender_name}: {original_text}\nError: Missing ACCESS_TOKEN or GROUP_ID")
-        logger.error("Missing ACCESS_TOKEN or GROUP_ID for user_id query")
         return False
-    try:
-        result = fuzzy_find_member(target_alias)
-        if not result:
-            send_system_message(f"> @{sender_name}: {original_text}\nNo user found matching '{target_alias}'")
-            return False
-        user_id, nickname = result
-        send_system_message(f"> @{sender_name}: {original_text}\n{nickname}'s user_id is {user_id}")
-        return True
-    except Exception as e:
-        logger.error(f"User ID query error: {e}")
-        send_system_message(f"> @{sender_name}: {original_text}\nError: Failed to fetch user_id")
+    result = fuzzy_find_member(target_alias)
+    if not result:
+        send_system_message(f"> @{sender_name}: {original_text}\nNo user found matching '{target_alias}'")
         return False
+    user_id, nickname = result
+    send_system_message(f"> @{sender_name}: {original_text}\n{nickname}'s user_id is {user_id}")
+    return True
 
-# -----------------------
-# Unban user logic (from app.py)
-# -----------------------
 def unban_user(target_alias: str, sender: str, sender_id: str, full_text: str) -> None:
-    """Attempt to unban (re-add) a user who was previously banned"""
     try:
         if str(sender_id) not in ADMIN_IDS:
             send_system_message(f"> @{sender}: {full_text}\nError: Only admins can use this command")
             return
         if not ACCESS_TOKEN or not GROUP_ID:
             send_system_message(f"> @{sender}: {full_text}\nError: Missing ACCESS_TOKEN or GROUP_ID")
-            logger.error("Missing ACCESS_TOKEN or GROUP_ID for unban")
             return
         match_user_id = None
         match_nickname = None
@@ -406,7 +398,7 @@ def unban_user(target_alias: str, sender: str, sender_id: str, full_text: str) -
                     match_nickname = uname
                     break
         if not match_user_id:
-            send_system_message(f"> @{sender}: {full_text}\n⚠️ No record of '{target_alias}' in banned list or group members.")
+            send_system_message(f"> @{sender}: {full_text}\nNo record of '{target_alias}' in banned list or group members.")
             return
         nickname = match_nickname or "Member"
         match_user_id = str(match_user_id)
@@ -436,7 +428,6 @@ def unban_user(target_alias: str, sender: str, sender_id: str, full_text: str) -
                 return (any(str(m.get("user_id")) == match_user_id for m in new_members), 0)
             results_id = data.get('response', {}).get('results_id')
             if not results_id:
-                logger.info("No results_id present in response; checking group members directly")
                 time.sleep(3)
                 new_members = get_group_members()
                 return (any(str(m.get("user_id")) == match_user_id for m in new_members), 0)
@@ -458,25 +449,19 @@ def unban_user(target_alias: str, sender: str, sender_id: str, full_text: str) -
                         results_data = poll_resp.json().get('response', {})
                         added_members = results_data.get('members', [])
                         if any(str(m.get('user_id')) == match_user_id for m in added_members):
-                            logger.info(f"✅ User found in poll results for {nick_to_add}")
+                            logger.info(f"User found in poll results for {nick_to_add}")
                             return True, 0
-                        else:
-                            logger.debug(f"Poll {attempt + 1} returned 200 but user {match_user_id} not in added members")
                     except Exception as e:
                         logger.error(f"Failed parsing poll JSON: {e}")
                 elif poll_resp.status_code == 404:
-                    logger.warning("Results expired (404)")
                     break
                 elif poll_resp.status_code == 503:
-                    logger.warning("Service temporarily unavailable (503) during poll")
                     continue
-                else:
-                    logger.warning(f"Unexpected poll status {poll_resp.status_code}")
             return False, 408
 
         success, status_code = attempt_add(safe_name)
         if success:
-            send_system_message(f"> @{sender}: {full_text}\n✅ {nickname} re-added to the group.")
+            send_system_message(f"> @{sender}: {full_text}\n{nickname} re-added to the group.")
             banned_users.pop(match_user_id, None)
             save_json(banned_users_file, banned_users)
             user_swear_counts.pop(match_user_id, None)
@@ -487,10 +472,9 @@ def unban_user(target_alias: str, sender: str, sender_id: str, full_text: str) -
             save_json(former_members_file, former_members)
             return
         time.sleep(6)
-        members_after_primary = get_group_members()
-        if any(str(m.get("user_id")) == match_user_id for m in members_after_primary):
-            logger.info(f"✅ User added despite omitted from poll results: {nickname}")
-            send_system_message(f"> @{sender}: {full_text}\n✅ {nickname} re-added to the group.")
+        members_after = get_group_members()
+        if any(str(m.get("user_id")) == match_user_id for m in members_after):
+            send_system_message(f"> @{sender}: {full_text}\n{nickname} re-added to the group.")
             banned_users.pop(match_user_id, None)
             save_json(banned_users_file, banned_users)
             user_swear_counts.pop(match_user_id, None)
@@ -501,24 +485,10 @@ def unban_user(target_alias: str, sender: str, sender_id: str, full_text: str) -
             save_json(former_members_file, former_members)
             return
         retry_name = re.sub(r"[^A-Za-z0-9]", "", safe_name)[:20] or "Member"
-        logger.warning(f"Primary unban failed (code {status_code}); retrying using '{retry_name}'.")
-        success, status_code = attempt_add(retry_name)
+        logger.warning(f"Primary unban failed; retrying with '{retry_name}'.")
+        success, _ = attempt_add(retry_name)
         if success:
-            send_system_message(f"> @{sender}: {full_text}\n✅ {retry_name} re-added after retry.")
-            banned_users.pop(match_user_id, None)
-            save_json(banned_users_file, banned_users)
-            user_swear_counts.pop(match_user_id, None)
-            save_json(user_swear_counts_file, user_swear_counts)
-            user_strikes.pop(match_user_id, None)
-            save_json(strikes_file, user_strikes)
-            former_members.pop(match_user_id, None)
-            save_json(former_members_file, former_members)
-            return
-        time.sleep(8)
-        members_after_retry = get_group_members()
-        if any(str(m.get("user_id")) == match_user_id for m in members_after_retry):
-            logger.info(f"✅ User added on retry despite omitted from poll: {nickname}")
-            send_system_message(f"> @{sender}: {full_text}\n✅ {nickname} re-added after retry.")
+            send_system_message(f"> @{sender}: {full_text}\n{retry_name} re-added after retry.")
             banned_users.pop(match_user_id, None)
             save_json(banned_users_file, banned_users)
             user_swear_counts.pop(match_user_id, None)
@@ -529,51 +499,35 @@ def unban_user(target_alias: str, sender: str, sender_id: str, full_text: str) -
             save_json(former_members_file, former_members)
             return
         share_url = get_group_share_url()
-        error_msg = f"GroupMe sync delay, recent removal cooldown, user privacy settings, or API silent failure (code {status_code})"
-        logger.warning(f"⚠️ Unban failed even after retry and final checks: {nickname} ({match_user_id}). {error_msg}")
-        fallback_msg = f"⚠️ Could not automatically re-add {nickname}. {error_msg}. "
+        error_msg = f"GroupMe sync delay, cooldown, or API failure (code {status_code})"
+        fallback_msg = f"Could not re-add {nickname}. {error_msg}. "
         if share_url:
-            fallback_msg += f"Try sending them the group invite: {share_url}"
-        else:
-            fallback_msg += "No group invite link available (check ACCESS_TOKEN)."
+            fallback_msg += f"Send them: {share_url}"
         send_system_message(f"> @{sender}: {full_text}\n{fallback_msg}")
     except Exception as e:
-        logger.error(f"unban_user unexpected error: {e}")
-        send_system_message(f"> @{sender}: {full_text}\n❌ Error while unbanning '{target_alias}': {str(e)}")
+        logger.error(f"unban_user error: {e}")
+        send_system_message(f"> @{sender}: {full_text}\nError unbanning '{target_alias}': {str(e)}")
 
-# -----------------------
-# Ban command (admin, from app.py)
-# -----------------------
 def ban_user_command(target_alias: str, sender_name: str, sender_id: str, original_text: str) -> bool:
     if str(sender_id) not in ADMIN_IDS:
         send_system_message(f"> @{sender_name}: {original_text}\nError: Only admins can use this command")
         return False
     if not ACCESS_TOKEN or not GROUP_ID:
         send_system_message(f"> @{sender_name}: {original_text}\nError: Missing ACCESS_TOKEN or GROUP_ID")
-        logger.error("Missing ACCESS_TOKEN or GROUP_ID for ban")
         return False
-    try:
-        result = fuzzy_find_member(target_alias)
-        if not result:
-            send_system_message(f"> @{sender_name}: {original_text}\nNo user found matching '{target_alias}'")
-            return False
-        target_user_id, target_username = result
-        success = call_ban_service(target_user_id, target_username, "Admin ban command")
-        if success:
-            send_system_message(f"> @{sender_name}: {original_text}\n🔨 {target_username} has been permanently banned by admin command.")
-        else:
-            send_system_message(f"> @{sender_name}: {original_text}\nError: Failed to ban {target_username}")
-        return success
-    except Exception as e:
-        logger.error(f"Ban command error: {e}")
-        send_system_message(f"> @{sender_name}: {original_text}\nError: Failed to ban '{target_alias}'")
+    result = fuzzy_find_member(target_alias)
+    if not result:
+        send_system_message(f"> @{sender_name}: {original_text}\nNo user found matching '{target_alias}'")
         return False
+    target_user_id, target_username = result
+    success = call_ban_service(target_user_id, target_username, "Admin ban command")
+    if success:
+        send_system_message(f"> @{sender_name}: {original_text}\n{target_username} has been permanently banned by admin command.")
+    else:
+        send_system_message(f"> @{sender_name}: {original_text}\nError: Failed to ban {target_username}")
+    return success
 
-# -----------------------
-# Strikes feature (from app.py)
-# -----------------------
 def record_strike(target_alias: str, admin_name: str, admin_id: str, original_text: str) -> None:
-    """Admin-only: record a strike against a user"""
     if str(admin_id) not in ADMIN_IDS:
         send_system_message(f"> @{admin_name}: {original_text}\nError: Only admins can issue 'strike' commands.")
         return
@@ -589,10 +543,9 @@ def record_strike(target_alias: str, admin_name: str, admin_id: str, original_te
     save_json(strikes_file, user_strikes)
     count = user_strikes[user_id]
     logger.info(f"Recorded strike for {nickname} ({user_id}) — total strikes: {count}")
-    send_system_message(f"> @{admin_name}: {original_text}\n⚠️ Strike recorded for {nickname} ({user_id}). Total strikes: {count}")
+    send_system_message(f"> @{admin_name}: {original_text}\nStrike recorded for {nickname} ({user_id}). Total strikes: {count}")
 
 def get_strikes_report(target_alias: str, requester_name: str, requester_id: str, original_text: str) -> None:
-    """Admin-only: report the strike count for a user"""
     if str(requester_id) not in ADMIN_IDS:
         send_system_message(f"> @{requester_name}: {original_text}\nError: Only admins can use '!strikes' command.")
         return
@@ -603,22 +556,27 @@ def get_strikes_report(target_alias: str, requester_name: str, requester_id: str
     user_id, nickname = result
     user_id = str(user_id)
     count = int(user_strikes.get(user_id, 0))
-    send_system_message(f"> @{requester_name}: {original_text}\n📊 {nickname} ({user_id}) has {count} strike(s).")
+    send_system_message(f"> @{requester_name}: {original_text}\n{nickname} ({user_id}) has {count} strike(s).")
 
 # -----------------------
-# Violation detection (from app.py)
+# Violation Detection with Deletion
 # -----------------------
-def check_for_violations(text: str, user_id: str, username: str) -> bool:
+def check_for_violations(text: str, user_id: str, username: str, message_id: str) -> bool:
     text_lower = text.lower()
     text_words = text_lower.split()
+    deleted = False
+
     for word in text_words:
         clean_word = word.strip('.,!?"\'()[]{}').lower()
         if clean_word in INSTANT_BAN_WORDS:
-            logger.info(f"🚨 INSTANT BAN: '{clean_word}' from {username}")
+            logger.info(f"INSTANT BAN: '{clean_word}' from {username} (msg {message_id})")
+            delete_message(message_id)
             success = call_ban_service(user_id, username, f"Instant ban: {clean_word}")
             if success:
-                send_system_message(f"🔨 {username} has been permanently banned for using prohibited language.")
+                send_system_message(f"{username} has been permanently banned for using prohibited language. (Message deleted)")
+            deleted = True
             return True
+
     for word in text_words:
         clean_word = word.strip('.,!?"\'()[]{}').lower()
         if clean_word in REGULAR_SWEAR_WORDS:
@@ -628,62 +586,58 @@ def check_for_violations(text: str, user_id: str, username: str) -> bool:
             user_swear_counts[uid] += 1
             save_json(user_swear_counts_file, user_swear_counts)
             current_count = user_swear_counts[uid]
-            logger.info(f"{username} swear count: {current_count}/10")
+            logger.info(f"{username} swear count: {current_count}/10 (msg {message_id})")
+            delete_message(message_id)
             if current_count >= 10:
                 success = call_ban_service(uid, username, f"10 strikes - swear words")
                 if success:
-                    send_system_message(f"🔨 {username} has been banned for repeated inappropriate language (10 strikes).")
+                    send_system_message(f"{username} has been banned for repeated inappropriate language (10 strikes). (Message deleted)")
                     user_swear_counts[uid] = 0
                     save_json(user_swear_counts_file, user_swear_counts)
+                deleted = True
                 return True
             else:
                 remaining = 10 - current_count
-                send_system_message(f"⚠️ {username} ({uid}) - Warning {current_count}/10 for inappropriate language. {remaining} more and you're banned!")
+                send_system_message(f"{username} ({uid}) - Warning {current_count}/10 for inappropriate language. {remaining} more and you're banned! (Message deleted)")
+            deleted = True
             break
-    return False
+    return deleted
 
 # -----------------------
-# Message sending helpers (from app.py)
+# Message Sending
 # -----------------------
 def send_system_message(text: str) -> bool:
-    """Send a message through the bot, respecting cooldown for non-strike messages"""
     global last_system_message_time, system_messages_enabled
     if not BOT_ID:
-        logger.error("No BOT_ID configured - can't send messages")
+        logger.error("No BOT_ID configured")
         return False
-    is_strike_or_ban_message = any(k in text for k in ["Warning", "banned", "Strike", "🔨", "⚠️"])
-    if not is_strike_or_ban_message and not system_messages_enabled:
-        logger.info(f"System message suppressed (disabled): {text[:80]}")
+    is_strike_or_ban = any(k in text for k in ["Warning", "banned", "Strike", "ban", "deleted"])
+    if not is_strike_or_ban and not system_messages_enabled:
         return False
     now = time.time()
-    if not is_strike_or_ban_message and now - last_system_message_time < cooldown_seconds:
-        logger.info("System message cooldown active")
+    if not is_strike_or_ban and now - last_system_message_time < cooldown_seconds:
         return False
     url = "https://api.groupme.com/v3/bots/post"
     payload = {"bot_id": BOT_ID, "text": text}
     try:
         response = requests.post(url, json=payload, timeout=8)
         response.raise_for_status()
-        if not is_strike_or_ban_message:
+        if not is_strike_or_ban:
             last_system_message_time = now
         logger.info(f"System message sent: {text[:80]}")
         return True
     except Exception as e:
-        logger.error(f"GroupMe system send error: {e}")
+        logger.error(f"GroupMe send error: {e}")
         return False
 
 def send_message(text: str) -> bool:
-    """Send a regular message, respecting cooldown"""
     global last_sent_time, system_messages_enabled
     if not system_messages_enabled:
-        logger.info(f"Regular message suppressed (system disabled): {text[:80]}")
         return False
     now = time.time()
     if now - last_sent_time < cooldown_seconds:
-        logger.info("Regular message cooldown active")
         return False
     if not BOT_ID:
-        logger.error("No BOT_ID configured - can't send messages")
         return False
     url = "https://api.groupme.com/v3/bots/post"
     payload = {"bot_id": BOT_ID, "text": text}
@@ -698,34 +652,29 @@ def send_message(text: str) -> bool:
         return False
 
 # -----------------------
-# System message heuristics (from app.py)
+# System Message Detection
 # -----------------------
 def is_system_message(data: Dict[str, Any]) -> bool:
     sender_type = data.get('sender_type')
     sender_name = data.get('name', '').lower()
     if sender_type == "system":
         return True
-    system_senders = ['groupme', 'system', '']
-    if sender_name in system_senders:
+    if sender_name in ['groupme', 'system', '']:
         return True
     return False
 
 def is_real_system_event(text_lower: str) -> bool:
-    system_patterns = [
-        'has joined the group',
-        'has left the group',
-        'was added to the group',
-        'was removed from the group',
-        'removed',
-        'added'
+    patterns = [
+        'has joined the group', 'has left the group',
+        'was added to the group', 'was removed from the group',
+        'removed', 'added'
     ]
-    return any(pattern in text_lower for pattern in system_patterns)
+    return any(pattern in text_lower for pattern in patterns)
 
 # -----------------------
-# Daily leaderboard helpers (from app.py)
+# Daily Leaderboard
 # -----------------------
 def _ensure_today_keys():
-    """Ensure daily structures correspond to today's date"""
     global daily_message_counts, last_message_by_user, daily_counts_date, last_messages_date
     today = datetime.now().strftime("%Y-%m-%d")
     if daily_counts_date != today:
@@ -740,34 +689,30 @@ def _ensure_today_keys():
         logger.info("Reset last_message_by_user for new day.")
 
 def increment_user_message_count(user_id: str, username: str, text: str) -> None:
-    """Increment daily message count for a user, ignoring duplicates"""
     try:
         _ensure_today_keys()
         uid = str(user_id)
         last_text = last_message_by_user.get(uid)
         normalized = (text or "").strip()
-        if last_text is not None and last_text == normalized:
-            logger.debug(f"Ignored identical message from {username} ({uid}).")
+        if last_text == normalized:
             return
         last_message_by_user[uid] = normalized
         daily_message_counts[uid] = int(daily_message_counts.get(uid, 0)) + 1
-        save_json(last_messages_file, {"date": daily_counts_date or datetime.now().strftime("%Y-%m-%d"), "last": last_message_by_user})
-        save_json(daily_counts_file, {"date": daily_counts_date or datetime.now().strftime("%Y-%m-%d"), "counts": daily_message_counts})
-        logger.debug(f"Incremented daily count for {username} ({uid}) -> {daily_message_counts[uid]}")
+        save_json(last_messages_file, {"date": daily_counts_date, "last": last_message_by_user})
+        save_json(daily_counts_file, {"date": daily_counts_date, "counts": daily_message_counts})
     except Exception as e:
-        logger.error(f"Error incrementing user message count: {e}")
+        logger.error(f"Error incrementing count: {e}")
 
 def _build_leaderboard_message(top_n: int = 3) -> str:
-    """Construct the daily leaderboard message"""
     try:
         _ensure_today_keys()
         if not daily_message_counts:
-            return "🏆 Daily Unemployed Leaders:\nNo messages recorded today."
+            return "Daily Unemployed Leaders:\nNo messages recorded today."
         members = get_group_members()
-        id_to_nick = {str(m.get("user_id")): m.get("nickname") for m in members if m.get("user_id") is not None}
+        id_to_nick = {str(m.get("user_id")): m.get("nickname") for m in members if m.get("user_id")}
         fallback = {str(k): v for k, v in former_members.items()}
         sorted_items = sorted(daily_message_counts.items(), key=lambda kv: (-int(kv[1]), kv[0]))
-        lines = ["🏆 Daily Unemployed Leaders:"]
+        lines = ["Daily Unemployed Leaders:"]
         rank = 1
         for uid, cnt in sorted_items[:top_n]:
             name = id_to_nick.get(uid) or fallback.get(uid) or f"User {uid}"
@@ -775,11 +720,10 @@ def _build_leaderboard_message(top_n: int = 3) -> str:
             rank += 1
         return "\n".join(lines)
     except Exception as e:
-        logger.error(f"Error building leaderboard message: {e}")
-        return "🏆 Daily Unemployed Leaders:\nError building leaderboard."
+        logger.error(f"Error building leaderboard: {e}")
+        return "Daily Unemployed Leaders:\nError."
 
 def _reset_daily_counts():
-    """Clear daily counts and last messages"""
     global daily_message_counts, last_message_by_user, daily_counts_date, last_messages_date
     today = datetime.now().strftime("%Y-%m-%d")
     daily_message_counts = {}
@@ -788,20 +732,16 @@ def _reset_daily_counts():
     last_messages_date = today
     save_json(daily_counts_file, {"date": today, "counts": daily_message_counts})
     save_json(last_messages_file, {"date": today, "last": last_message_by_user})
-    logger.info("Daily counts and last messages reset after posting leaderboard.")
 
 def _seconds_until_next_8pm():
-    """Return seconds until the next 8 PM local time"""
     now = datetime.now()
     target = now.replace(hour=20, minute=0, second=0, microsecond=0)
     if now >= target:
-        target = target + timedelta(days=1)
-    delta = target - now
-    return max(0, delta.total_seconds())
+        target += timedelta(days=1)
+    return max(0, (target - now).total_seconds())
 
 def daily_leaderboard_worker():
-    """Background thread to post daily leaderboard at 8 PM"""
-    logger.info("Daily leaderboard thread started.")
+    logger.info("Leaderboard thread started.")
     while True:
         try:
             secs = _seconds_until_next_8pm()
@@ -809,28 +749,40 @@ def daily_leaderboard_worker():
                 sleep_chunk = min(secs, 300)
                 time.sleep(sleep_chunk)
                 secs -= sleep_chunk
-            msg = _build_leaderboard_message(top_n=3)
-            posted = send_message(msg)
-            if posted:
-                logger.info("Posted daily leaderboard at 8 PM local time.")
+            msg = _build_leaderboard_message()
+            if send_message(msg):
+                logger.info("Posted daily leaderboard.")
             else:
-                logger.warning("Failed to post daily leaderboard (send_message returned False).")
+                logger.warning("Failed to post leaderboard.")
             _reset_daily_counts()
             time.sleep(5)
         except Exception as e:
-            logger.error(f"Daily leaderboard worker exception: {e}")
+            logger.error(f"Leaderboard worker error: {e}")
             time.sleep(60)
 
 def start_leaderboard_thread_once():
-    """Start the leaderboard thread only once"""
     if not getattr(start_leaderboard_thread_once, "_started", False):
         t = threading.Thread(target=daily_leaderboard_worker, daemon=True)
         t.start()
         start_leaderboard_thread_once._started = True
-        logger.info("Daily leaderboard background thread initialized.")
+        logger.info("Leaderboard thread initialized.")
 
 # -----------------------
-# Webhook endpoint (from app.py)
+# Webhook Root Fallback
+# -----------------------
+@app.route('/', methods=['GET', 'POST'])
+def root():
+    if request.method == 'POST':
+        logger.warning(f"POST to root / from {request.remote_addr} - redirecting to /webhook")
+        return webhook()
+    return jsonify({
+        "message": "GroupMe Bot is running",
+        "webhook": "/webhook",
+        "health": "/health"
+    }), 200
+
+# -----------------------
+# Webhook
 # -----------------------
 @app.route('/webhook', methods=['POST'])
 def webhook():
@@ -843,9 +795,11 @@ def webhook():
         sender_type = data.get('sender_type')
         sender = data.get('name', 'Someone')
         user_id = str(data.get('user_id')) if data.get('user_id') is not None else None
+        message_id = data.get('id')  # Critical for deletion
         text_lower = text.lower()
         attachments = data.get("attachments", [])
-        # --- SYSTEM EVENTS ---
+
+        # System Events
         if sender_type == "system" or is_system_message(data):
             if is_real_system_event(text_lower):
                 if 'has left the group' in text_lower:
@@ -859,34 +813,31 @@ def webhook():
                     key = user_id or f"ghost-{sender}"
                     former_members[str(key)] = sender
                     save_json(former_members_file, former_members)
-                    send_system_message("this could be you if you break the rules, watch it. 👀")
+                    send_system_message("this could be you if you break the rules, watch it.")
                 elif 'has rejoined the group' in text_lower:
                     send_system_message("oh look who's back")
             return '', 200
         if sender_type not in ['user']:
             return '', 200
-        # --- COMMAND HANDLING ---
+
+        # Commands
         if text_lower.startswith('!unban '):
             target_alias = text[len('!unban '):].strip()
             if target_alias:
                 unban_user(target_alias, sender, user_id, text)
             return '', 200
         if text_lower.startswith('!ban '):
-            target_alias = text[len('!ban '):].strip()
-            if target_alias.startswith('@'):
-                target_alias = target_alias[1:].strip()
-            target_alias = target_alias.strip('.,!?:;')
+            target_alias = text[len('!ban '):].strip().lstrip('@').strip('.,!?:;')
             if target_alias:
                 ban_user_command(target_alias, sender, user_id, text)
             else:
                 send_system_message(f"> @{sender}: {text}\nUsage: !ban @username")
             return '', 200
         if text_lower.startswith('!leaderboard'):
-            msg = _build_leaderboard_message(top_n=3)
-            send_message(msg)
+            send_message(_build_leaderboard_message())
             return '', 200
         if text_lower.startswith('#dismantle '):
-            target_alias = text[len('#dismantle'):].strip()
+            target_alias = text[len('#dismantle '):].strip()
             if target_alias:
                 ban_user_command(target_alias, sender, user_id, text)
             return '', 200
@@ -895,65 +846,61 @@ def webhook():
             if 'what is' in text_lower and 'user id' in text_lower:
                 try:
                     idx = text_lower.index('user id')
-                    maybe = text[:idx].replace('what is', '').strip()
-                    target_alias = maybe
-                except Exception:
+                    target_alias = text[:idx].replace('what is', '').strip()
+                except:
                     target_alias = None
             if target_alias:
                 get_user_id(target_alias, sender, user_id, text)
             return '', 200
         if re.match(r'^\s*strike\s+@?(\S+)', text.strip(), flags=re.I):
             m = re.match(r'^\s*strike\s+@?(\S+)', text.strip(), flags=re.I)
-            if m:
-                alias = m.group(1).strip()
-                alias = alias.strip('.,!?:;')
-                record_strike(alias, sender, user_id, text)
-            else:
-                send_system_message(f"> @{sender}: {text}\nUsage: strike @username")
+            alias = m.group(1).strip('.,!?:;')
+            record_strike(alias, sender, user_id, text)
             return '', 200
         if text_lower.startswith('!strikes '):
-            alias = text[len('!strikes '):].strip()
+            alias = text[len('!strikes '):].strip().lstrip('@')
             if alias:
-                alias = alias.lstrip('@').strip()
                 get_strikes_report(alias, sender, user_id, text)
-            return '', 200
-        if text_lower.startswith('!strikes') and len(text_lower.split()) == 1:
-            send_system_message(f"> @{sender}: {text}\nUsage: !strikes <username or id>")
             return '', 200
         if text_lower.strip() == '!disable':
             if str(user_id) not in ADMIN_IDS:
-                send_system_message(f"> @{sender}: {text}\nError: Only admins can use '!disable' command.")
+                send_system_message(f"> @{sender}: {text}\nError: Only admins can use '!disable'.")
                 return '', 200
             if system_messages_enabled:
                 system_messages_enabled = False
                 save_system_messages_enabled(False)
-                send_system_message(f"> @{sender}: {text}\n✅ System messages disabled (except strikes and bans).")
-            else:
-                send_system_message(f"> @{sender}: {text}\nSystem messages are already disabled.")
+                send_system_message(f"> @{sender}: {text}\nSystem messages disabled (except strikes and bans).")
             return '', 200
         if text_lower.strip() == '!enable':
             if str(user_id) not in ADMIN_IDS:
-                send_system_message(f"> @{sender}: {text}\nError: Only admins can use '!enable' command.")
+                send_system_message(f"> @{sender}: {text}\nError: Only admins can use '!enable'.")
                 return '', 200
             if not system_messages_enabled:
                 system_messages_enabled = True
                 save_system_messages_enabled(True)
-                send_system_message(f"> @{sender}: {text}\n✅ System messages enabled.")
-            else:
-                send_system_message(f"> @{sender}: {text}\nSystem messages are already enabled.")
+                send_system_message(f"> @{sender}: {text}\nSystem messages enabled.")
             return '', 200
         if text_lower.startswith('!google '):
-            search_query = text[len('!google '):].strip()
-            if search_query:
-                summary = google_search(search_query)
-                send_message(f"> {sender}: {text}\n{summary}")
-            else:
-                send_message(f"> {sender}: {text}\nUsage: !google <your question>")
+            query = text[len('!google '):].strip()
+            if query:
+                send_message(f"> {sender}: {text}\n{google_search(query)}")
             return '', 200
-        # --- VIOLATION CHECKS ---
-        if user_id and text:
-            check_for_violations(text, user_id, sender)
-        # --- TRIGGERS / AUTORESPONSES ---
+        if text_lower.startswith('!deletemsg '):
+            if str(user_id) not in ADMIN_IDS:
+                send_system_message(f"> @{sender}: {text}\nError: Only admins can delete messages.")
+                return '', 200
+            msg_id = text[len('!deletemsg '):].strip()
+            if msg_id and delete_message(msg_id):
+                send_system_message(f"> @{sender}: {text}\nMessage {msg_id} deleted.")
+            else:
+                send_system_message(f"> @{sender}: {text}\nFailed to delete message {msg_id}.")
+            return '', 200
+
+        # Violation Check
+        if user_id and text and message_id:
+            check_for_violations(text, user_id, sender, str(message_id))
+
+        # Triggers
         if 'clean memes' in text_lower:
             send_message("We're the best!")
         elif 'wsg' in text_lower:
@@ -966,19 +913,18 @@ def webhook():
             send_message("please censor that to fr*nce")
         elif 'french' in text_lower:
             send_message("please censor that to fr*nch")
-        # --- DAILY MESSAGE COUNT TRACKING ---
-        try:
-            if user_id and text:
-                increment_user_message_count(user_id, sender, text)
-        except Exception as e:
-            logger.error(f"Error updating daily counts for message: {e}")
+
+        # Daily Count
+        if user_id and text:
+            increment_user_message_count(user_id, sender, text)
+
         return '', 200
     except Exception as e:
         logger.error(f"Webhook error: {e}")
         return '', 500
 
 # -----------------------
-# Admin HTTP helper to reset counts (from app.py)
+# Admin Endpoints
 # -----------------------
 @app.route('/reset-count', methods=['POST'])
 def reset_count():
@@ -996,13 +942,12 @@ def reset_count():
         return {"error": str(e)}, 500
 
 # -----------------------
-# Ban Service Endpoints (from ban_service.py, under /ban-service/)
+# Ban Service Blueprint
 # -----------------------
 ban_bp = Blueprint('ban_service', __name__, url_prefix='/ban-service')
 
 @ban_bp.route("/ban", methods=["POST"])
 def ban_endpoint():
-    """Endpoint to ban a user from the group"""
     try:
         data = request.get_json(force=True)
         user_id = data.get('user_id')
@@ -1010,47 +955,35 @@ def ban_endpoint():
         reason = data.get('reason', 'Policy violation')
         if not user_id:
             return jsonify({"error": "user_id required"}), 400
-        logger.info(f"🔨 Ban request for {username} ({user_id}): {reason}")
+        logger.info(f"Ban request for {username} ({user_id}): {reason}")
         success = ban_user(user_id, username, reason)
-        return jsonify({
-            "success": success,
-            "user_id": str(user_id),
-            "username": username,
-            "reason": reason
-        }), (200 if success else 400)
+        return jsonify({"success": success, "user_id": str(user_id), "username": username, "reason": reason}), (200 if success else 400)
     except Exception as e:
         logger.exception("Error in ban endpoint")
         return jsonify({"error": str(e)}), 500
 
 @ban_bp.route("/test-membership", methods=["POST"])
 def test_membership():
-    """Test endpoint to check if we can find a user's membership ID"""
     try:
         data = request.get_json(force=True)
         user_id = data.get('user_id')
         if not user_id:
             return jsonify({"error": "user_id required"}), 400
         membership_id = get_user_membership_id(user_id)
-        return jsonify({
-            "user_id": str(user_id),
-            "membership_id": membership_id,
-            "found": membership_id is not None
-        }), 200
+        return jsonify({"user_id": str(user_id), "membership_id": membership_id, "found": membership_id is not None}), 200
     except Exception as e:
-        logger.exception("Error in test-membership endpoint")
+        logger.exception("Error in test-membership")
         return jsonify({"error": str(e)}), 500
 
 @ban_bp.route("/members", methods=["GET"])
 def members():
-    """List all group members (for debugging)"""
     try:
         url = f"{GROUPME_API}/groups/{GROUP_ID}?token={ACCESS_TOKEN}"
         response = requests.get(url, timeout=8)
         if response.status_code == 401:
-            return jsonify({"error": "ACCESS TOKEN INVALID OR EXPIRED"}), 401
+            return jsonify({"error": "ACCESS TOKEN INVALID"}), 401
         if response.status_code != 200:
-            logger.error(f"Failed to fetch group: {response.status_code} {response.text}")
-            return jsonify({"error": f"Failed to get group: {response.status_code}"}), 500
+            return jsonify({"error": f"Failed: {response.status_code}"}), 500
         group_data = response.json()
         members = group_data.get('response', {}).get('members', [])
         member_list = []
@@ -1072,7 +1005,6 @@ def members():
 
 @ban_bp.route("/health", methods=["GET"])
 def ban_health():
-    """Health check endpoint for ban service"""
     return jsonify({
         "status": "healthy" if ACCESS_TOKEN and GROUP_ID else "missing config",
         "service": "GroupMe Ban Service",
@@ -1082,31 +1014,27 @@ def ban_health():
 
 @ban_bp.route("/", methods=["GET"])
 def ban_root():
-    """Root endpoint for ban service"""
     return jsonify({
         "service": "GroupMe Ban Service",
         "endpoints": {
-            "POST /ban": "Ban a user from the group",
-            "POST /test-membership": "Test finding a user's membership ID",
-            "GET /members": "List all group members",
-            "GET /health": "Health check",
-            "GET /": "This endpoint"
+            "POST /ban": "Ban a user",
+            "POST /test-membership": "Test membership ID",
+            "GET /members": "List members",
+            "GET /health": "Health check"
         }
     }), 200
 
-# Register the blueprint
 app.register_blueprint(ban_bp)
 
 # -----------------------
-# Merged Health Endpoint
+# Health
 # -----------------------
 @app.route('/health', methods=['GET'])
 def health():
-    """Combined health check for bot and ban service"""
     bot_id_brief = (BOT_ID[:8] + "...") if BOT_ID else "MISSING"
     return jsonify({
         "status": "healthy" if BOT_ID and ACCESS_TOKEN and GROUP_ID else "missing config",
-        "service": "Combined GroupMe Bot + Ban Service",
+        "service": "GroupMe Bot + Ban Service",
         "bot_id": bot_id_brief,
         "bot_name": BOT_NAME,
         "group_id": GROUP_ID or "MISSING",
@@ -1124,44 +1052,38 @@ def health():
     }), 200
 
 # -----------------------
-# Keep-alive task (from ban_service.py)
+# Keep-Alive
 # -----------------------
 def keep_alive_task(poll_interval_sec: int = 300, self_ping: bool = True, port: int = PORT):
-    """Background task to keep the service alive"""
     health_url = f"http://127.0.0.1:{port}/health"
     while True:
         try:
-            logger.info("⏰ Keep-alive ping - service is running")
+            logger.info("Keep-alive ping")
             if self_ping:
                 try:
                     resp = requests.get(health_url, timeout=6)
-                    logger.info(f"⏱ Self-ping {health_url} -> {resp.status_code}")
+                    logger.info(f"Self-ping -> {resp.status_code}")
                 except Exception as e:
-                    logger.warning(f"Keep-alive self-ping failed: {e}")
+                    logger.warning(f"Self-ping failed: {e}")
         except Exception:
-            logger.exception("Unexpected error in keep-alive loop")
+            logger.exception("Keep-alive error")
         time.sleep(poll_interval_sec)
 
 # -----------------------
 # Main
 # -----------------------
 if __name__ == "__main__":
-    logger.info("🔨 Starting Combined GroupMe Bot + Ban Service")
+    logger.info("Starting Combined GroupMe Bot + Ban Service")
     logger.info(f"Group ID: {GROUP_ID or 'MISSING'}")
-    logger.info(f"Access Token: {'SET' if ACCESS_TOKEN else 'MISSING'}")
     logger.info(f"Bot ID: {'SET' if BOT_ID else 'MISSING'}")
-    logger.info(f"Port: {PORT}")
-    logger.info(f"Keep-alive self-ping enabled: {SELF_PING}")
 
     if not ACCESS_TOKEN or not GROUP_ID or not BOT_ID:
-        logger.error("❌ Missing required env vars!")
+        logger.error("Missing required env vars!")
 
-    # Start keep-alive thread
-    t_keep = threading.Thread(target=keep_alive_task, kwargs={"poll_interval_sec": 300, "self_ping": SELF_PING, "port": PORT}, daemon=True)
+    t_keep = threading.Thread(target=keep_alive_task, kwargs={"self_ping": SELF_PING, "port": PORT}, daemon=True)
     t_keep.start()
-    logger.info("⏰ Keep-alive thread started")
+    logger.info("Keep-alive thread started")
 
-    # Start leaderboard thread
     start_leaderboard_thread_once()
 
     app.run(host="0.0.0.0", port=PORT, debug=False)
