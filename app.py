@@ -1005,7 +1005,6 @@ def webhook():
             if is_mute:
                 mute_until = int(time.time()) + (minutes * 60)
                 muted_users[target_user_id] = mute_until
-                send_system_message(f"> @{sender}: {text}\n{target_nickname} muted for {minutes} min. Messages deleted.")
                 logger.info(f"MUTED: {target_nickname} ({target_user_id}) for {minutes}m")
             else:
                 if target_user_id not in muted_users:
