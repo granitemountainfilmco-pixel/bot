@@ -1259,6 +1259,11 @@ def webhook():
             send_message(msg)
             return '', 200
 
+        if text_lower.strip() == '!balance':
+            balance = game_data["balances"].get(user_id, 0)
+            send_message(f"Your MemeCoin balance: **{balance} Coins**")
+            return '', 200
+
         if text_lower.strip() == '!resetmeme' and str(user_id) in ADMIN_IDS:
             game_data = {
                 "nfts": {},
