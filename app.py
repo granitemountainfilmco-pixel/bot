@@ -1232,7 +1232,7 @@ def webhook():
             send_dm(user_id, "**Your Collection**\n" + "\n".join(lines))
             return '', 200
 
-        if text_lower.strip() == '!leaderboard':
+        if text_lower.strip() == '!mememoney':
             portfolio = {}
             for uid in set(nft["owner"] for nft in game_data["nfts"].values()):
                 value = sum(nft["price"] for nft in game_data["nfts"].values() if nft["owner"] == uid)
@@ -1244,6 +1244,11 @@ def webhook():
             top = sorted(portfolio.items(), key=lambda x: -x[1])[:5]
             lines = [f"{i+1}. <@{uid}> — **{val} Total Value**" for i, (uid, val) in enumerate(top)]
             send_message("**Top Meme Collectors**\n" + "\n".join(lines))
+            return '', 200
+
+        if text_lower.strip() == '!unemployed':
+            msg = _build_leaderboard_message()
+            send_message(msg)
             return '', 200
 
         if text_lower.strip() == '!resetmeme' and str(user_id) in ADMIN_IDS:
