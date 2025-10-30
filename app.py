@@ -1343,108 +1343,108 @@ def webhook():
 
             return '', 200
 
-# Impostor Commands
-if text_lower.strip() == '!impostor':
-    if user_id not in ADMIN_IDS:
-        send_system_message(f"> @{sender}: {text}\nOnly admins can start impostor game.")
-        return '', 200
-    if game_state != 'inactive':
-        send_system_message(f"> @{sender}: {text}\nGame already in progress.")
-        return '', 200
-    game_state = 'setup'
-    players.clear()
-    send_message("Impostor game starting! Use !join to join the game.")
-    return '', 200
+        # Impostor Commands
+        if text_lower.strip() == '!impostor':
+            if user_id not in ADMIN_IDS:
+                send_system_message(f"> @{sender}: {text}\nOnly admins can start impostor game.")
+                return '', 200
+            if game_state != 'inactive':
+                send_system_message(f"> @{sender}: {text}\nGame already in progress.")
+                return '', 200
+            game_state = 'setup'   
+            players.clear()
+            send_message("Impostor game starting! Use !join to join the game.")
+            return '', 200
+        
+        elif text_lower.strip() == '!join':
+            if game_state != 'setup':
+                send_system_message(f"> @{sender}: {text}\nNo game setup currently.")
+                return '', 200
+            if user_id in players:
+                send_system_message(f"> @{sender}: {text}\nYou already joined.")
+                return '', 200
+            players.add(user_id)
+            send_message(f"{sender} joined the impostor game! Current players: {len(players)}")
+            return '', 200
+        
+        elif text_lower.strip() == '!start':
+            if user_id not in ADMIN_IDS:
+                send_system_message(f"> @{sender}: {text}\nOnly admins can start the game.")
+                return '', 200
+            if game_state != 'setup':
+                send_system_message(f"> @{sender}: {text}\nNo game is being set up. Use `!impostor` first.")
+                return '', 200
+            if len(players) < 3:
+                send_system_message(f"> @{sender}: {text}\nNeed **at least 3 players** to start. Current: {len(players)}")
+                return '', 200
+        
+            impostor = random.choice(list(players))
+            general_topic, exact_thing = random.choice(TOPICS)
 
-elif text_lower.strip() == '!join':
-    if game_state != 'setup':
-        send_system_message(f"> @{sender}: {text}\nNo game setup currently.")
-        return '', 200
-    if user_id in players:
-        send_system_message(f"> @{sender}: {text}\nYou already joined.")
-        return '', 200
-    players.add(user_id)
-    send_message(f"{sender} joined the impostor game! Current players: {len(players)}")
-    return '', 200
+            # --------------------------------------------------------------
+            #  EXPANDED START MESSAGE – FULL RULES
+            # --------------------------------------------------------------
+            members = get_group_members()
+            id_to_nick = {str(m['user_id']): m['nickname'] for m in members}   
+            player_names = [id_to_nick.get(uid, f"User {uid}") for uid in players]
+        
+            rules_msg = (
+                "IMPOSTOR GAME STARTED!\n\n"
+                "**Topic:** `" + general_topic + "`\n"
+                "**Players:** " + ", ".join(player_names) + "\n\n"
+                "RULES:\n"
+                "1. **One player is the IMPOSTOR** – they *do NOT know* the exact answer.\n"
+                "2. **Everyone else** has been **whispered the real answer** (check the bot’s DM to you).\n"
+                "3. **Chat normally** – describe the thing using the general topic.\n"
+                "4. **Goal:** Figure out who the Impostor is by how they talk (or don’t talk).\n"
+                "5. **No spoilers!** Do not say the exact answer out loud.\n"
+                "6. **Game ends** with `!end` (admin only) or when the Impostor is caught.\n\n"
+                "The real players now know the answer. The Impostor is guessing…\n"
+                "Let the mind games begin!"
+            )
 
-elif text_lower.strip() == '!start':
-    if user_id not in ADMIN_IDS:
-        send_system_message(f"> @{sender}: {text}\nOnly admins can start the game.")
-        return '', 200
-    if game_state != 'setup':
-        send_system_message(f"> @{sender}: {text}\nNo game is being set up. Use `!impostor` first.")
-        return '', 200
-    if len(players) < 3:
-        send_system_message(f"> @{sender}: {text}\nNeed **at least 3 players** to start. Current: {len(players)}")
-        return '', 200
+            send_message(rules_msg)
+        
+            # --------------------------------------------------------------
+            #  SEND DMs TO PLAYERS
+            # --------------------------------------------------------------
+            for uid in players:
+                nick = id_to_nick.get(uid, "Player")
+                if uid != impostor:
+                    send_dm(uid, f"IMPOSTOR GAME – Your secret:\n\n**The exact thing is:** `{exact_thing}`\n\n"
+                                 f"Help the others figure out who the Impostor is without saying it directly!")
+                else:
+                    send_dm(uid, "You are the **IMPOSTOR**!\n\n"
+                                 "You *do NOT know* the exact answer. Pretend you do based on the topic: "
+                                 f"`{general_topic}`\n\n"
+                                 "Act natural and try to blend in!")
 
-    impostor = random.choice(list(players))
-    general_topic, exact_thing = random.choice(TOPICS)
+            game_state = 'running'
+            return '', 200
+        
+        elif text_lower.strip() == '!end':
+            if user_id not in ADMIN_IDS:
+                send_system_message(f"> @{sender}: {text}\nOnly admins can end the game.")
+                return '', 200
+            if game_state == 'inactive':
+                send_system_message(f"> @{sender}: {text}\nNo game running.")
+                return '', 200
+        
+            members = get_group_members()
+            id_to_nick = {str(m['user_id']): m['nickname'] for m in members}
+        
+            impostor_name = id_to_nick.get(str(impostor), 'Unknown') if impostor else 'Unknown'
+            thing = exact_thing or 'Unknown'
+        
+            send_message(f"Game ended by {sender}.\nThe impostor was: {impostor_name}\nExact thing: {thing}")
 
-    # --------------------------------------------------------------
-    #  EXPANDED START MESSAGE – FULL RULES
-    # --------------------------------------------------------------
-    members = get_group_members()
-    id_to_nick = {str(m['user_id']): m['nickname'] for m in members}
-    player_names = [id_to_nick.get(uid, f"User {uid}") for uid in players]
-
-    rules_msg = (
-        "IMPOSTOR GAME STARTED!\n\n"
-        "**Topic:** `" + general_topic + "`\n"
-        "**Players:** " + ", ".join(player_names) + "\n\n"
-        "RULES:\n"
-        "1. **One player is the IMPOSTOR** – they *do NOT know* the exact answer.\n"
-        "2. **Everyone else** has been **whispered the real answer** (check the bot’s DM to you).\n"
-        "3. **Chat normally** – describe the thing using the general topic.\n"
-        "4. **Goal:** Figure out who the Impostor is by how they talk (or don’t talk).\n"
-        "5. **No spoilers!** Do not say the exact answer out loud.\n"
-        "6. **Game ends** with `!end` (admin only) or when the Impostor is caught.\n\n"
-        "The real players now know the answer. The Impostor is guessing…\n"
-        "Let the mind games begin!"
-    )
-
-    send_message(rules_msg)
-
-    # --------------------------------------------------------------
-    #  SEND DMs TO PLAYERS
-    # --------------------------------------------------------------
-    for uid in players:
-        nick = id_to_nick.get(uid, "Player")
-        if uid != impostor:
-            send_dm(uid, f"IMPOSTOR GAME – Your secret:\n\n**The exact thing is:** `{exact_thing}`\n\n"
-                         f"Help the others figure out who the Impostor is without saying it directly!")
-        else:
-            send_dm(uid, "You are the **IMPOSTOR**!\n\n"
-                         "You *do NOT know* the exact answer. Pretend you do based on the topic: "
-                         f"`{general_topic}`\n\n"
-                         "Act natural and try to blend in!")
-
-    game_state = 'running'
-    return '', 200
-
-elif text_lower.strip() == '!end':
-    if user_id not in ADMIN_IDS:
-        send_system_message(f"> @{sender}: {text}\nOnly admins can end the game.")
-        return '', 200
-    if game_state == 'inactive':
-        send_system_message(f"> @{sender}: {text}\nNo game running.")
-        return '', 200
-
-    members = get_group_members()
-    id_to_nick = {str(m['user_id']): m['nickname'] for m in members}
-
-    impostor_name = id_to_nick.get(str(impostor), 'Unknown') if impostor else 'Unknown'
-    thing = exact_thing or 'Unknown'
-
-    send_message(f"Game ended by {sender}.\nThe impostor was: {impostor_name}\nExact thing: {thing}")
-
-    # Reset game
-    game_state = 'inactive'
-    players.clear()
-    impostor = None
-    general_topic = None
-    exact_thing = None
-    return '', 200
+            # Reset game
+            game_state = 'inactive'
+            players.clear()
+            impostor = None
+            general_topic = None
+            exact_thing = None
+            return '', 200
             
         # Violation Check
         if user_id and text and message_id:
