@@ -203,6 +203,50 @@ def call_ban_service(user_id: str, username: str, reason: str) -> bool:
         save_json(user_swear_counts_file, user_swear_counts)
     return success
 
+# -------------------------------------------------
+# DAILY 100 COIN INFLATION — EVERY 24 HOURS
+# -------------------------------------------------
+def daily_coin_inflation_worker():
+    """Runs every 24 hours: +100 coins to every player with a balance."""
+    logger.info("Daily inflation thread started.")
+    while True:
+        try:
+            # Wait until next 12:00 AM UTC (or any time you prefer)
+            now = datetime.utcnow()
+            next_run = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+            sleep_seconds = (next_run - now).total_seconds()
+            if sleep_seconds > 0:
+                time.sleep(sleep_seconds)
+
+            # === GIVE 100 COINS TO EVERYONE ===
+            if "balances" not in game_data:
+                game_data["balances"] = {}
+            
+            affected = 0
+            for uid in list(game_data["balances"].keys()):
+                game_data["balances"][uid] += 100
+                affected += 1
+
+            # Also give to anyone who has ever minted (even if balance was 0)
+            for uid in game_data.get("has_minted", set()):
+                uid = str(uid)
+                game_data["balances"][uid] = game_data["balances"].get(uid, 0) + 100
+                affected += 1
+
+            save_game_data(game_data)
+            logger.info(f"Daily inflation: +100 coins to {affected} players.")
+            
+            # Optional: Announce in group
+            send_message("**DAILY DROP** — Everyone gets **+100 MemeCoins**! Check `!balance`")
+
+        except Exception as e:
+            logger.error(f"Inflation worker error: {e}")
+            time.sleep(3600)  # Wait 1h on error
+
+# Start the thread
+inflation_thread = threading.Thread(target=daily_coin_inflation_worker, daemon=True)
+inflation_thread.start()
+
 # -----------------------
 # Message Deletion (Community API)
 # -----------------------
