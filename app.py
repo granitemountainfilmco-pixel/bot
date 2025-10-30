@@ -1056,7 +1056,7 @@ def webhook():
             return '', 200
 
         # Violation Check
-        if user_id, text, message_id:
+        if user_id and text and message_id:
             check_for_violations(text, user_id, sender, str(message_id))
 
         # Daily Count
