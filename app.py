@@ -1264,16 +1264,27 @@ def webhook():
                 send_message(msg)
             return '', 200
 
+                # -------------------------------------------------
+        # SHOW COLLECTION IN GROUP (NOT DM)
+        # -------------------------------------------------
         if text_lower.strip() == '!collection':
-            owned = [nft for nft in game_data["nfts"].values() if nft["owner"] == user_id]
-            if not owned:
-                send_dm(user_id, "You own no NFTs! Mint with `!memeupload`.")
+            owned_nfts = [nft for nft_id, nft in game_data["nfts"].items() if nft["owner"] == user_id]
+            if not owned_nfts:
+                send_message(f"@{sender} You don't own any MemeNFTs yet! Use `!memeupload`")
                 return '', 200
-            lines = []
-            for nid, nft in game_data["nfts"].items():
+
+            lines = [f"**{sender}'s Meme Collection** ({len(owned_nfts)} NFT{'' if len(owned_nfts)==1 else 's'})"]
+            for nft_id, nft in game_data["nfts"].items():
                 if nft["owner"] == user_id:
-                    lines.append(f"#{nid} | {nft['name']} | Rarity: {nft['rarity']} | Value: {nft['price']}")
-            send_dm(user_id, "**Your Collection**\n" + "\n".join(lines))
+                    status = "🟢 In Wallet" if not nft.get("listed") else f"🔴 Listed @ {nft['price']} Coins"
+                    lines.append(f"• **#{nft_id}** | {nft.get('name', 'Untitled')} | Rarity: **{nft['rarity']}/10** | {status}")
+
+            # Truncate if too long
+            msg = "\n".join(lines)
+            if len(msg) > 1000:
+                msg = msg[:997] + "..."
+
+            send_message(msg)
             return '', 200
 
         if text_lower.strip() == '!mememoney':
