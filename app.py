@@ -14,10 +14,10 @@ import random
 
 app = Flask(__name__)
 
-# --- MERGED CONFIG ---
-ACCESS_TOKEN = os.getenv("ACCESS_TOKEN")  # Shared: GroupMe API token
-GROUP_ID = os.getenv("GROUP_ID")  # Shared: Group ID
-BOT_ID = os.getenv("BOT_ID")
+# --- CONFIG ---
+ACCESS_TOKEN = os.getenv("ACCESS_TOKEN")  # GroupMe API token
+GROUP_ID = os.getenv("GROUP_ID")          # Main group ID
+BOT_ID = os.getenv("BOT_ID")              # Bot ID
 BOT_NAME = os.getenv("BOT_NAME", "ClankerBot")
 PORT = int(os.getenv("PORT", 5000))
 SELF_PING = os.getenv("KEEP_ALIVE_SELF_PING", "true").lower() in ("1", "true", "yes")
@@ -28,6 +28,8 @@ ADMIN_IDS = [
     '117776217', '85166615', '114066399', '84254355', '115866991', '124523409',
     '125629030', '124579254', '121097804'
 ]
+JSONBIN_MASTER_KEY = os.getenv("JSONBIN_MASTER_KEY")
+JSONBIN_BIN_ID = os.getenv("JSONBIN_BIN_ID")
 
 # Swear word categories
 INSTANT_BAN_WORDS = [
@@ -205,7 +207,6 @@ def call_ban_service(user_id: str, username: str, reason: str) -> bool:
 # Message Deletion (Community API)
 # -----------------------
 def delete_message(message_id: str) -> bool:
-    """Delete a message using the community API endpoint."""
     if not ACCESS_TOKEN or not GROUP_ID:
         logger.error("Missing ACCESS_TOKEN or GROUP_ID for message deletion")
         return False
@@ -564,30 +565,23 @@ def get_strikes_report(target_alias: str, requester_name: str, requester_id: str
 # Violation Detection with Deletion
 # -----------------------
 def check_for_violations(text: str, user_id: str, username: str, message_id: str) -> bool:
-    """
-    Check for muted users first, then swears/instant bans.
-    Deletes message + sends warning if muted or violation.
-    """
     uid = str(user_id)
     now = time.time()
     deleted = False
 
-    # === MUTE CHECK: Auto-delete if user is muted ===
     if uid in muted_users and now < muted_users[uid]:
         minutes_left = int((muted_users[uid] - now) / 60) + 1
         if delete_message(message_id):
             logger.info(f"MUTED MSG DELETED: {username} ({uid}), {minutes_left}m left")
             deleted = True
-        return deleted  # Skip swear checks
+        return deleted
 
-    # === Clean expired mutes ===
     expired = [u for u, until in list(muted_users.items()) if now >= until]
     for u in expired:
         del muted_users[u]
     if expired:
         logger.info(f"Cleaned {len(expired)} expired mutes")
 
-    # === Instant Ban Words ===
     text_lower = text.lower()
     text_words = text_lower.split()
     for word in text_words:
@@ -601,7 +595,6 @@ def check_for_violations(text: str, user_id: str, username: str, message_id: str
             deleted = True
             return True
 
-    # === Regular Swear Words (Strike System) ===
     for word in text_words:
         clean_word = word.strip('.,!?"\'()[]{}').lower()
         if clean_word in REGULAR_SWEAR_WORDS:
@@ -626,7 +619,7 @@ def check_for_violations(text: str, user_id: str, username: str, message_id: str
                 remaining = 10 - current_count
                 send_system_message(f"{username} ({uid}) - Warning {current_count}/10 for inappropriate language. {remaining} more and you're banned! (Message deleted)")
             deleted = True
-            break  # Only one swear per message
+            break
 
     return deleted
 
@@ -816,313 +809,64 @@ def start_leaderboard_thread_once():
         logger.info("Leaderboard thread initialized.")
 
 # -----------------------
-# Impostor Gamemode
+# Jsonbin Helpers
 # -----------------------
-TOPICS = [
-    ("a fruit", "apple"),
-    ("a fruit", "banana"),
-    ("a fruit", "orange"),
-    ("a fruit", "strawberry"),
-    ("a fruit", "grape"),
-    ("a fruit", "pineapple"),
-    ("a fruit", "mango"),
-    ("a fruit", "kiwi"),
-    ("a fruit", "pear"),
-    ("a fruit", "cherry"),
-    ("a fruit", "watermelon"),
-    ("a fruit", "blueberry"),
-    ("a fruit", "peach"),
-    ("a fruit", "lemon"),
-    ("a fruit", "lime"),
-    ("an animal", "dog"),
-    ("an animal", "cat"),
-    ("an animal", "elephant"),
-    ("an animal", "lion"),
-    ("an animal", "tiger"),
-    ("an animal", "giraffe"),
-    ("an animal", "monkey"),
-    ("an animal", "bird"),
-    ("an animal", "fish"),
-    ("an animal", "snake"),
-    ("an animal", "horse"),
-    ("an animal", "cow"),
-    ("an animal", "pig"),
-    ("an animal", "sheep"),
-    ("an animal", "rabbit"),
-    ("a color", "blue"),
-    ("a color", "red"),
-    ("a color", "green"),
-    ("a color", "yellow"),
-    ("a color", "purple"),
-    ("a color", "orange"),
-    ("a color", "black"),
-    ("a color", "white"),
-    ("a color", "pink"),
-    ("a color", "brown"),
-    ("a color", "gray"),
-    ("a color", "cyan"),
-    ("a color", "magenta"),
-    ("a color", "indigo"),
-    ("a color", "violet"),
-    ("a vehicle", "car"),
-    ("a vehicle", "bicycle"),
-    ("a vehicle", "motorcycle"),
-    ("a vehicle", "bus"),
-    ("a vehicle", "train"),
-    ("a vehicle", "airplane"),
-    ("a vehicle", "boat"),
-    ("a vehicle", "truck"),
-    ("a vehicle", "helicopter"),
-    ("a vehicle", "submarine"),
-    ("a vehicle", "scooter"),
-    ("a vehicle", "van"),
-    ("a vehicle", "tractor"),
-    ("a vehicle", "spaceship"),
-    ("a vehicle", "hot air balloon"),
-    ("a city", "New York"),
-    ("a city", "London"),
-    ("a city", "Paris"),
-    ("a city", "Tokyo"),
-    ("a city", "Los Angeles"),
-    ("a city", "Berlin"),
-    ("a city", "Sydney"),
-    ("a city", "Moscow"),
-    ("a city", "Beijing"),
-    ("a city", "Rome"),
-    ("a city", "Dubai"),
-    ("a city", "Chicago"),
-    ("a city", "Toronto"),
-    ("a city", "Mumbai"),
-    ("a city", "Istanbul"),
-    ("a movie", "Inception"),
-    ("a movie", "The Matrix"),
-    ("a movie", "Titanic"),
-    ("a movie", "Star Wars"),
-    ("a movie", "The Godfather"),
-    ("a movie", "Jurassic Park"),
-    ("a movie", "Avengers: Endgame"),
-    ("a movie", "Forrest Gump"),
-    ("a movie", "The Shawshank Redemption"),
-    ("a movie", "Pulp Fiction"),
-    ("a movie", "Fight Club"),
-    ("a movie", "The Dark Knight"),
-    ("a movie", "Interstellar"),
-    ("a movie", "Parasite"),
-    ("a movie", "Joker"),
-    ("a food", "pizza"),
-    ("a food", "hamburger"),
-    ("a food", "sushi"),
-    ("a food", "pasta"),
-    ("a food", "taco"),
-    ("a food", "salad"),
-    ("a food", "steak"),
-    ("a food", "ice cream"),
-    ("a food", "chocolate"),
-    ("a food", "sandwich"),
-    ("a food", "curry"),
-    ("a food", "fried chicken"),
-    ("a food", "ramen"),
-    ("a food", "burrito"),
-    ("a food", "pancake"),
-    ("a sport", "soccer"),
-    ("a sport", "basketball"),
-    ("a sport", "tennis"),
-    ("a sport", "baseball"),
-    ("a sport", "golf"),
-    ("a sport", "swimming"),
-    ("a sport", "running"),
-    ("a sport", "boxing"),
-    ("a sport", "volleyball"),
-    ("a sport", "cricket"),
-    ("a sport", "hockey"),
-    ("a sport", "skiing"),
-    ("a sport", "surfing"),
-    ("a sport", "cycling"),
-    ("a sport", "wrestling"),
-    ("a planet", "Earth"),
-    ("a planet", "Mars"),
-    ("a planet", "Venus"),
-    ("a planet", "Jupiter"),
-    ("a planet", "Saturn"),
-    ("a planet", "Mercury"),
-    ("a planet", "Neptune"),
-    ("a planet", "Uranus"),
-    ("a planet", "Pluto"),
-    ("a book", "Harry Potter"),
-    ("a book", "The Lord of the Rings"),
-    ("a book", "1984"),
-    ("a book", "To Kill a Mockingbird"),
-    ("a book", "The Great Gatsby"),
-    ("a book", "Pride and Prejudice"),
-    ("a book", "The Catcher in the Rye"),
-    ("a book", "Moby-Dick"),
-    ("a book", "War and Peace"),
-    ("a book", "The Hobbit"),
-    ("a book", "Fahrenheit 451"),
-    ("a book", "Brave New World"),
-    ("a book", "The Da Vinci Code"),
-    ("a book", "Animal Farm"),
-    ("a book", "Gone with the Wind"),
-    ("a country", "United States"),
-    ("a country", "Canada"),
-    ("a country", "France"),
-    ("a country", "Japan"),
-    ("a country", "Australia"),
-    ("a country", "Germany"),
-    ("a country", "Brazil"),
-    ("a country", "India"),
-    ("a country", "China"),
-    ("a country", "Russia"),
-    ("a country", "United Kingdom"),
-    ("a country", "Italy"),
-    ("a country", "Spain"),
-    ("a country", "Mexico"),
-    ("a country", "South Korea"),
-    ("a celebrity", "Tom Hanks"),
-    ("a celebrity", "Beyoncé"),
-    ("a celebrity", "Elon Musk"),
-    ("a celebrity", "Taylor Swift"),
-    ("a celebrity", "Leonardo DiCaprio"),
-    ("a celebrity", "Oprah Winfrey"),
-    ("a celebrity", "Dwayne Johnson"),
-    ("a celebrity", "Angelina Jolie"),
-    ("a celebrity", "Kanye West"),
-    ("a celebrity", "Emma Watson"),
-    ("a celebrity", "Will Smith"),
-    ("a celebrity", "Rihanna"),
-    ("a celebrity", "Chris Hemsworth"),
-    ("a celebrity", "Ariana Grande"),
-    ("a celebrity", "Bill Gates"),
-    ("a musical instrument", "guitar"),
-    ("a musical instrument", "piano"),
-    ("a musical instrument", "drums"),
-    ("a musical instrument", "violin"),
-    ("a musical instrument", "flute"),
-    ("a musical instrument", "trumpet"),
-    ("a musical instrument", "saxophone"),
-    ("a musical instrument", "cello"),
-    ("a musical instrument", "harp"),
-    ("a musical instrument", "ukulele"),
-    ("a musical instrument", "bass guitar"),
-    ("a musical instrument", "accordion"),
-    ("a musical instrument", "clarinet"),
-    ("a musical instrument", "trombone"),
-    ("a musical instrument", "banjo"),
-    ("a vegetable", "carrot"),
-    ("a vegetable", "broccoli"),
-    ("a vegetable", "potato"),
-    ("a vegetable", "tomato"),
-    ("a vegetable", "lettuce"),
-    ("a vegetable", "onion"),
-    ("a vegetable", "cucumber"),
-    ("a vegetable", "spinach"),
-    ("a vegetable", "pepper"),
-    ("a vegetable", "cauliflower"),
-    ("a vegetable", "zucchini"),
-    ("a vegetable", "eggplant"),
-    ("a vegetable", "celery"),
-    ("a vegetable", "asparagus"),
-    ("a vegetable", "radish"),
-    ("a drink", "coffee"),
-    ("a drink", "tea"),
-    ("a drink", "water"),
-    ("a drink", "soda"),
-    ("a drink", "juice"),
-    ("a drink", "beer"),
-    ("a drink", "wine"),
-    ("a drink", "milk"),
-    ("a drink", "lemonade"),
-    ("a drink", "smoothie"),
-    ("a drink", "whiskey"),
-    ("a drink", "vodka"),
-    ("a drink", "hot chocolate"),
-    ("a drink", "energy drink"),
-    ("a drink", "cocktail"),
-    ("a superhero", "Superman"),
-    ("a superhero", "Batman"),
-    ("a superhero", "Spider-Man"),
-    ("a superhero", "Wonder Woman"),
-    ("a superhero", "Iron Man"),
-    ("a superhero", "Captain America"),
-    ("a superhero", "Thor"),
-    ("a superhero", "Black Widow"),
-    ("a superhero", "Hulk"),
-    ("a superhero", "Flash"),
-    ("a superhero", "Aquaman"),
-    ("a superhero", "Green Lantern"),
-    ("a superhero", "Doctor Strange"),
-    ("a superhero", "Black Panther"),
-    ("a superhero", "Captain Marvel"),
-    ("a video game", "Minecraft"),
-    ("a video game", "Fortnite"),
-    ("a video game", "Super Mario Bros"),
-    ("a video game", "The Legend of Zelda"),
-    ("a video game", "Grand Theft Auto V"),
-    ("a video game", "Call of Duty"),
-    ("a video game", "Pokémon"),
-    ("a video game", "Tetris"),
-    ("a video game", "The Sims"),
-    ("a video game", "Assassin's Creed"),
-    ("a video game", "Overwatch"),
-    ("a video game", "League of Legends"),
-    ("a video game", "FIFA"),
-    ("a video game", "Animal Crossing"),
-    ("a video game", "Cyberpunk 2077"),
-    ("a TV show", "Friends"),
-    ("a TV show", "The Office"),
-    ("a TV show", "Game of Thrones"),
-    ("a TV show", "Breaking Bad"),
-    ("a TV show", "Stranger Things"),
-    ("a TV show", "The Simpsons"),
-    ("a TV show", "The Mandalorian"),
-    ("a TV show", "Black Mirror"),
-    ("a TV show", "The Crown"),
-    ("a TV show", "Seinfeld"),
-    ("a TV show", "Doctor Who"),
-    ("a TV show", "The Big Bang Theory"),
-    ("a TV show", "Westworld"),
-    ("a TV show", "Narcos"),
-    ("a TV show", "The Witcher"),
-    ("a historical figure", "Albert Einstein"),
-    ("a historical figure", "Abraham Lincoln"),
-    ("a historical figure", "Martin Luther King Jr."),
-    ("a historical figure", "Leonardo da Vinci"),
-    ("a historical figure", "Cleopatra"),
-    ("a historical figure", "Winston Churchill"),
-    ("a historical figure", "Mahatma Gandhi"),
-    ("a historical figure", "Nelson Mandela"),
-    ("a historical figure", "Julius Caesar"),
-    ("a historical figure", "Queen Elizabeth I"),
-    ("a historical figure", "Napoleon Bonaparte"),
-    ("a historical figure", "George Washington"),
-    ("a historical figure", "Adolf Hitler"),
-    ("a historical figure", "Joan of Arc"),
-    ("a historical figure", "Christopher Columbus"),
-    ("a mythical creature", "dragon"),
-    ("a mythical creature", "unicorn"),
-    ("a mythical creature", "phoenix"),
-    ("a mythical creature", "vampire"),
-    ("a mythical creature", "werewolf"),
-    ("a mythical creature", "mermaid"),
-    ("a mythical creature", "griffin"),
-    ("a mythical creature", "centaur"),
-    ("a mythical creature", "minotaur"),
-    ("a mythical creature", "fairy"),
-    ("a mythical creature", "elf"),
-    ("a mythical creature", "troll"),
-    ("a mythical creature", "goblin"),
-    ("a mythical creature", "kraken"),
-    ("a mythical creature", "sphinx"),
-]
+def load_game_data() -> Dict[str, Any]:
+    if not JSONBIN_MASTER_KEY or not JSONBIN_BIN_ID:
+        logger.error("Missing JSONBIN creds")
+        return {}
+    url = f"https://api.jsonbin.io/v3/b/{JSONBIN_BIN_ID}/latest"
+    headers = {"X-Master-Key": JSONBIN_MASTER_KEY}
+    try:
+        resp = requests.get(url, headers=headers, timeout=5)
+        resp.raise_for_status()
+        return resp.json().get("record", {})
+    except Exception as e:
+        logger.error(f"Jsonbin load error: {e}")
+        return {}
 
-game_state = 'inactive'
-players = set()
-impostor = None
-general_topic = None
-exact_thing = None
+def save_game_data(data: Dict[str, Any]) -> bool:
+    if not JSONBIN_MASTER_KEY or not JSONBIN_BIN_ID:
+        return False
+    url = f"https://api.jsonbin.io/v3/b/{JSONBIN_BIN_ID}"
+    headers = {"X-Master-Key": JSONBIN_MASTER_KEY, "Content-Type": "application/json"}
+    try:
+        resp = requests.put(url, headers=headers, json=data, timeout=5)
+        resp.raise_for_status()
+        return True
+    except Exception as e:
+        logger.error(f"Jsonbin save error: {e}")
+        return False
+
+# Game Data Init
+game_data = load_game_data() or {
+    "companies": {},
+    "portfolios": {},
+    "credits": {}
+}
+pending_actions = {}
 
 # -----------------------
-# Webhook Root Fallback
+# Subgroup Helpers
+# -----------------------
+def create_subgroup(topic="StockMarket", description="Stock Game Channel", group_type="announcement"):
+    url = f"{GROUPME_API}/groups/{GROUP_ID}/subgroups?token={ACCESS_TOKEN}"
+    payload = {"topic": topic, "description": description, "group_type": group_type}
+    try:
+        resp = requests.post(url, json=payload, timeout=8)
+        if resp.status_code == 201:
+            subgroup_id = resp.json().get('response', {}).get('id')
+            logger.info(f"Created subgroup {topic} (ID: {subgroup_id})")
+            return subgroup_id
+        else:
+            logger.error(f"Subgroup create failed: {resp.status_code} - {resp.text}")
+            return None
+    except Exception as e:
+        logger.error(f"Subgroup create error: {e}")
+        return None
+
+# -----------------------
+# Webhook
 # -----------------------
 @app.route('/', methods=['GET', 'POST'])
 def root():
@@ -1135,13 +879,10 @@ def root():
         "health": "/health"
     }), 200
 
-# -----------------------
-# Webhook
-# -----------------------
 @app.route('/webhook', methods=['POST'])
 def webhook():
     try:
-        global system_messages_enabled, game_state, players, impostor, general_topic, exact_thing
+        global system_messages_enabled, game_data, pending_actions
         data = request.get_json()
         if not data:
             return '', 200
@@ -1149,9 +890,47 @@ def webhook():
         sender_type = data.get('sender_type')
         sender = data.get('name', 'Someone')
         user_id = str(data.get('user_id')) if data.get('user_id') is not None else None
-        message_id = data.get('id')  # Critical for deletion
+        message_id = data.get('id')
         text_lower = text.lower()
-        attachments = data.get("attachments", [])
+        is_dm = 'group_id' not in data or not data['group_id']
+
+        # DM Reply Handling
+        if is_dm and user_id in pending_actions:
+            action = pending_actions[user_id]
+            if action['action'] == 'buy':
+                try:
+                    amount = int(text.strip())
+                    company = action['company']
+                    price = game_data['companies'][company]['value']
+                    cost = amount * price
+                    credits = game_data['credits'].get(user_id, 0)
+                    if cost > credits:
+                        send_dm(user_id, "Not enough credits!")
+                    else:
+                        game_data['credits'][user_id] -= cost
+                        game_data['portfolios'][user_id][company] = game_data['portfolios'][user_id].get(company, 0) + amount
+                        save_game_data(game_data)
+                        send_dm(user_id, f"Bought {amount} {company} shares for {cost} Credits.")
+                except ValueError:
+                    send_dm(user_id, "Invalid amount—try a number.")
+            elif action['action'] == 'sell':
+                try:
+                    amount = int(text.strip())
+                    company = action['company']
+                    owned = game_data['portfolios'].get(user_id, {}).get(company, 0)
+                    if amount > owned:
+                        send_dm(user_id, "You don't own that many!")
+                    else:
+                        game_data['credits'][user_id] += amount * game_data['companies'][company]['value']
+                        game_data['portfolios'][user_id][company] -= amount
+                        if game_data['portfolios'][user_id][company] == 0:
+                            del game_data['portfolios'][user_id][company]
+                        save_game_data(game_data)
+                        send_dm(user_id, f"Sold {amount} {company} shares.")
+                except ValueError:
+                    send_dm(user_id, "Invalid amount.")
+            del pending_actions[user_id]
+            return '', 200
 
         # System Events
         if sender_type == "system" or is_system_message(data):
@@ -1174,299 +953,111 @@ def webhook():
         if sender_type not in ['user']:
             return '', 200
 
-        # Commands
-        if text_lower.startswith('!unban '):
-            target_alias = text[len('!unban '):].strip()
-            if target_alias:
-                unban_user(target_alias, sender, user_id, text)
+        # Game Commands
+        if text_lower.strip() == '!startgame' and str(user_id) in ADMIN_IDS:
+            subgroup_id = create_subgroup()
+            if subgroup_id:
+                send_message("StockMarket game started! Join the subgroup for trading.")
             return '', 200
-        if text_lower.startswith('!ban '):
-            target_alias = text[len('!ban '):].strip().lstrip('@').strip('.,!?:;')
-            if target_alias:
-                ban_user_command(target_alias, sender, user_id, text)
+
+        if text_lower.startswith('!found '):
+            company = text[len('!found '):].strip()
+            if company in game_data["companies"]:
+                send_message(f"> @{sender}: Company exists!")
             else:
-                send_system_message(f"> @{sender}: {text}\nUsage: !ban @username")
+                game_data["companies"][company] = {"ceo": user_id, "shares": 1000, "value": 100, "members": [user_id]}
+                game_data["portfolios"][user_id] = {company: 500}
+                game_data["credits"][user_id] = 500
+                save_game_data(game_data)
+                send_message(f"{sender} founded {company}!")
             return '', 200
-        if text_lower.startswith('!leaderboard'):
-            send_message(_build_leaderboard_message())
+
+        if text_lower.startswith('!join '):
+            company = text[len('!join '):].strip()
+            if company not in game_data["companies"]:
+                send_message(f"> @{sender}: Company not found!")
+            elif user_id in game_data["companies"][company]["members"]:
+                send_message(f"> @{sender}: Already joined!")
+            else:
+                game_data["companies"][company]["members"].append(user_id)
+                game_data["portfolios"][user_id] = game_data["portfolios"].get(user_id, {}) | {company: 10}
+                game_data["credits"][user_id] = game_data["credits"].get(user_id, 500)
+                save_game_data(game_data)
+                send_message(f"{sender} joined {company}!")
             return '', 200
-        if text_lower.startswith('#dismantle '):
-            target_alias = text[len('#dismantle '):].strip()
-            if target_alias:
-                ban_user_command(target_alias, sender, user_id, text)
+
+        if text_lower.startswith('!buy '):
+            company = text[len('!buy '):].strip()
+            if company not in game_data["companies"]:
+                send_message(f"> @{sender}: Company not found!")
+            else:
+                pending_actions[user_id] = {"action": "buy", "company": company}
+                max_aff = game_data["credits"].get(user_id, 0) // game_data["companies"][company]["value"]
+                send_dm(user_id, f"How many {company} shares? (Price: {game_data['companies'][company]['value']}/share, Max: {max_aff})")
             return '', 200
-        if text_lower.startswith('!userid ') or ('what is' in text_lower and 'user id' in text_lower):
-            target_alias = text[len('!userid '):].strip() if text_lower.startswith('!userid ') else None
-            if 'what is' in text_lower and 'user id' in text_lower:
+
+        if text_lower.startswith('!sell '):
+            company = text[len('!sell '):].strip()
+            if company not in game_data["companies"]:
+                send_message(f"> @{sender}: Company not found!")
+            else:
+                pending_actions[user_id] = {"action": "sell", "company": company}
+                owned = game_data["portfolios"].get(user_id, {}).get(company, 0)
+                send_dm(user_id, f"How many {company} shares to sell? (You own: {owned})")
+            return '', 200
+
+        if text_lower.startswith('!trade '):
+            parts = text[len('!trade '):].strip().split()
+            if len(parts) < 3 or not parts[0].startswith('@'):
+                send_message(f"> @{sender}: Usage: !trade @user Company Shares")
+            else:
+                target_name = parts[0][1:]
+                company = parts[1]
                 try:
-                    idx = text_lower.index('user id')
-                    target_alias = text[:idx].replace('what is', '').strip()
+                    shares = int(parts[2])
                 except:
-                    target_alias = None
-            if target_alias:
-                get_user_id(target_alias, sender, user_id, text)
-            return '', 200
-        if re.match(r'^\s*strike\s+@?(\S+)', text.strip(), flags=re.I):
-            m = re.match(r'^\s*strike\s+@?(\S+)', text.strip(), flags=re.I)
-            alias = m.group(1).strip('.,!?:;')
-            record_strike(alias, sender, user_id, text)
-            return '', 200
-        if text_lower.startswith('!strikes '):
-            alias = text[len('!strikes '):].strip().lstrip('@')
-            if alias:
-                get_strikes_report(alias, sender, user_id, text)
-            return '', 200
-        if text_lower.strip() == '!disable':
-            if str(user_id) not in ADMIN_IDS:
-                send_system_message(f"> @{sender}: {text}\nError: Only admins can use '!disable'.")
-                return '', 200
-            if system_messages_enabled:
-                system_messages_enabled = False
-                save_system_messages_enabled(False)
-                send_system_message(f"> @{sender}: {text}\nSystem messages disabled (except strikes and bans).")
-            return '', 200
-        if text_lower.strip() == '!enable':
-            if str(user_id) not in ADMIN_IDS:
-                send_system_message(f"> @{sender}: {text}\nError: Only admins can use '!enable'.")
-                return '', 200
-            if not system_messages_enabled:
-                system_messages_enabled = True
-                save_system_messages_enabled(True)
-                send_system_message(f"> @{sender}: {text}\nSystem messages enabled.")
-            return '', 200
-        if text_lower.startswith('!google '):
-            query = text[len('!google '):].strip()
-            if query:
-                send_message(f"> {sender}: {text}\n{google_search(query)}")
-            return '', 200
-        # --- !delete: Reply to a message and type "!delete" to remove it (admin only) ---
-        if text_lower.strip() == '!delete':
-            if str(user_id) not in ADMIN_IDS:
-                send_system_message(f"> @{sender}: {text}\nError: Only admins can use '!delete'.")
-                return '', 200
-
-            reply_id = None
-            for att in attachments:
-                if att.get("type") == "reply" and att.get("reply_id"):
-                    reply_id = att["reply_id"]
-                    break
-
-            if not reply_id:
-                send_system_message(f"> @{sender}: {text}\nError: You must *reply* to a message to use '!delete'.")
-                return '', 200
-
-            if delete_message(reply_id):
-                send_system_message(f"> @{sender}: {text}\nMessage deleted.")
-            else:
-                send_system_message(f"> @{sender}: {text}\nFailed to delete. (Too old or already gone?)")
-            return '', 200
-
-                # --- !clear @username: Reset strikes to 0 (admin only) ---
-        if text_lower.startswith('!clear '):
-            if str(user_id) not in ADMIN_IDS:
-                send_system_message(f"> @{sender}: {text}\nError: Only admins can use '!clear'.")
-                return '', 200
-
-            target_alias = text[len('!clear '):].strip().lstrip('@')
-            if not target_alias:
-                send_system_message(f"> @{sender}: {text}\nUsage: `!clear @username`")
-                return '', 200
-
-            result = fuzzy_find_member(target_alias)
-            if not result:
-                send_system_message(f"> @{sender}: {text}\nNo user found matching '@{target_alias}'.")
-                return '', 200
-
-            target_user_id, target_nickname = result
-            target_user_id = str(target_user_id)
-
-            old_count = user_strikes.get(target_user_id, 0)
-            if old_count == 0:
-                send_system_message(f"> @{sender}: {text}\n{target_nickname} has no strikes to clear.")
-                return '', 200
-
-            user_strikes[target_user_id] = 0
-            save_json(strikes_file, user_strikes)
-
-            send_system_message(f"> @{sender}: {text}\n{target_nickname}'s strikes cleared: `{old_count} → 0`")
-            logger.info(f"Strikes cleared for {target_nickname} ({target_user_id}) by {sender}")
-            return '', 200
-
-        # --- !mute @username [minutes] | !unmute @username (in-memory) ---
-        if text_lower.startswith('!mute ') or text_lower.startswith('!unmute '):
-            if str(user_id) not in ADMIN_IDS:
-                send_system_message(f"> @{sender}: {text}\nError: Only admins can use mute commands.")
-                return '', 200
-
-            is_mute = text_lower.startswith('!mute ')
-            command = 'mute' if is_mute else 'unmute'
-            rest = text[len(f'!{command} '):].strip()  # Everything after !mute or !unmute
-
-            if not rest:
-                send_system_message(f"> @{sender}: {text}\nUsage: `!{command} @username [minutes]`")
-                return '', 200
-
-            # Split into username and optional minutes
-            parts = rest.rsplit(maxsplit=1)  # Split from RIGHT, max 1 time
-            target_alias = parts[0].lstrip('@')
-            minutes = 5  # default
-
-            if len(parts) > 1:
-                try:
-                    minutes = int(parts[1])
-                    if not 1 <= minutes <= 1440:
-                        send_system_message(f"> @{sender}: {text}\nMinutes must be 1–1440.")
-                        return '', 200
-                except ValueError:
-                    send_system_message(f"> @{sender}: {text}\nInvalid minutes. Use a number.")
+                    send_message(f"> @{sender}: Invalid shares.")
                     return '', 200
-
-            result = fuzzy_find_member(target_alias)
-            if not result:
-                send_system_message(f"> @{sender}: {text}\nUser not found: @{target_alias}")
-                return '', 200
-
-            target_user_id, target_nickname = result
-            target_user_id = str(target_user_id)
-
-            if is_mute:
-                mute_until = int(time.time()) + (minutes * 60)
-                muted_users[target_user_id] = mute_until
-                logger.info(f"MUTED: {target_nickname} ({target_user_id}) for {minutes}m")
-            else:
-                if target_user_id not in muted_users:
-                    send_system_message(f"> @{sender}: {text}\n{target_nickname} is not muted.")
-                    return '', 200
-                del muted_users[target_user_id]
-                send_system_message(f"> @{sender}: {text}\n{target_nickname} unmuted.")
-                logger.info(f"UNMUTED: {target_nickname} ({target_user_id})")
-
-            return '', 200
-
-        # Impostor Commands
-        if text_lower.strip() == '!impostor':
-            if user_id not in ADMIN_IDS:
-                send_system_message(f"> @{sender}: {text}\nOnly admins can start impostor game.")
-                return '', 200
-            if game_state != 'inactive':
-                send_system_message(f"> @{sender}: {text}\nGame already in progress.")
-                return '', 200
-            game_state = 'setup'   
-            players.clear()
-            send_message("Impostor game starting! Use !join to join the game.")
-            return '', 200
-        
-        elif text_lower.strip() == '!join':
-            if game_state != 'setup':
-                send_system_message(f"> @{sender}: {text}\nNo game setup currently.")
-                return '', 200
-            if user_id in players:
-                send_system_message(f"> @{sender}: {text}\nYou already joined.")
-                return '', 200
-            players.add(user_id)
-            send_message(f"{sender} joined the impostor game! Current players: {len(players)}")
-            return '', 200
-        
-        elif text_lower.strip() == '!start':
-            if user_id not in ADMIN_IDS:
-                send_system_message(f"> @{sender}: {text}\nOnly admins can start the game.")
-                return '', 200
-            if game_state != 'setup':
-                send_system_message(f"> @{sender}: {text}\nNo game is being set up. Use `!impostor` first.")
-                return '', 200
-            if len(players) < 3:
-                send_system_message(f"> @{sender}: {text}\nNeed **at least 3 players** to start. Current: {len(players)}")
-                return '', 200
-        
-            impostor = random.choice(list(players))
-            general_topic, exact_thing = random.choice(TOPICS)
-
-            # --------------------------------------------------------------
-            #  EXPANDED START MESSAGE – FULL RULES
-            # --------------------------------------------------------------
-            members = get_group_members()
-            id_to_nick = {str(m['user_id']): m['nickname'] for m in members}   
-            player_names = [id_to_nick.get(uid, f"User {uid}") for uid in players]
-        
-            rules_msg = (
-                "IMPOSTOR GAME STARTED!\n\n"
-                "**Topic:** `" + general_topic + "`\n"
-                "**Players:** " + ", ".join(player_names) + "\n\n"
-                "RULES:\n"
-                "1. **One player is the IMPOSTOR** – they *do NOT know* the exact answer.\n"
-                "2. **Everyone else** has been **whispered the real answer** (check the bot’s DM to you).\n"
-                "3. **Chat normally** – describe the thing using the general topic.\n"
-                "4. **Goal:** Figure out who the Impostor is by how they talk (or don’t talk).\n"
-                "5. **No spoilers!** Do not say the exact answer out loud.\n"
-                "6. **Game ends** with `!end` (admin only) or when the Impostor is caught.\n\n"
-                "The real players now know the answer. The Impostor is guessing…\n"
-                "Let the mind games begin!"
-            )
-
-            send_message(rules_msg)
-        
-            # --------------------------------------------------------------
-            #  SEND DMs TO PLAYERS
-            # --------------------------------------------------------------
-            for uid in players:
-                nick = id_to_nick.get(uid, "Player")
-                if uid != impostor:
-                    send_dm(uid, f"IMPOSTOR GAME – Your secret:\n\n**The exact thing is:** `{exact_thing}`\n\n"
-                                 f"Help the others figure out who the Impostor is without saying it directly!")
+                target = fuzzy_find_member(target_name)
+                if not target:
+                    send_message(f"> @{sender}: User not found!")
+                elif company not in game_data["companies"]:
+                    send_message(f"> @{sender}: Company not found!")
+                elif game_data["portfolios"].get(user_id, {}).get(company, 0) < shares:
+                    send_message(f"> @{sender}: Not enough shares!")
                 else:
-                    send_dm(uid, "You are the **IMPOSTOR**!\n\n"
-                                 "You *do NOT know* the exact answer. Pretend you do based on the topic: "
-                                 f"`{general_topic}`\n\n"
-                                 "Act natural and try to blend in!")
-
-            game_state = 'running'
+                    target_id, _ = target
+                    send_dm(user_id, f"Confirm: Send {shares} {company} to @{target_name}? Reply YES")
+                    send_dm(target_id, f"@{sender} offers {shares} {company} shares. Reply YES to accept.")
+                    pending_actions[user_id] = {"action": "trade_sender", "target": target_id, "company": company, "shares": shares}
+                    pending_actions[target_id] = {"action": "trade_target", "sender": user_id, "company": company, "shares": shares}
             return '', 200
-        
-        elif text_lower.strip() == '!end':
-            if user_id not in ADMIN_IDS:
-                send_system_message(f"> @{sender}: {text}\nOnly admins can end the game.")
-                return '', 200
-            if game_state == 'inactive':
-                send_system_message(f"> @{sender}: {text}\nNo game running.")
-                return '', 200
-        
-            members = get_group_members()
-            id_to_nick = {str(m['user_id']): m['nickname'] for m in members}
-        
-            impostor_name = id_to_nick.get(str(impostor), 'Unknown') if impostor else 'Unknown'
-            thing = exact_thing or 'Unknown'
-        
-            send_message(f"Game ended by {sender}.\nThe impostor was: {impostor_name}\nExact thing: {thing}")
 
-            # Reset game
-            game_state = 'inactive'
-            players.clear()
-            impostor = None
-            general_topic = None
-            exact_thing = None
+        if text_lower.strip() == '!myportfolio':
+            portfolio = game_data["portfolios"].get(user_id, {})
+            credits = game_data["credits"].get(user_id, 0)
+            msg = f"Your Portfolio (Credits: {credits})\n" + "\n".join(f"{co}: {sh} shares" for co, sh in portfolio.items()) or "Empty"
+            send_dm(user_id, msg)
             return '', 200
-            
+
+        if text_lower.strip() == '!leaderboard':
+            if not game_data["companies"]:
+                send_message("No companies yet!")
+            else:
+                sorted_cos = sorted(game_data["companies"].items(), key=lambda kv: -kv[1]["value"])
+                msg = "Top Empires:\n" + "\n".join(f"{i+1}. {co} (Value: {data['value']})" for i, (co, data) in enumerate(sorted_cos[:5]))
+                send_message(msg)
+            return '', 200
+
+        if text_lower.strip() == '!endgame' and str(user_id) in ADMIN_IDS:
+            send_message("Game ended! Final results coming...")
+            game_data = {"companies": {}, "portfolios": {}, "credits": {}}
+            save_game_data(game_data)
+            return '', 200
+
         # Violation Check
-        if user_id and text and message_id:
+        if user_id, text, message_id:
             check_for_violations(text, user_id, sender, str(message_id))
-
-        # Triggers
-        if 'clean memes' in text_lower:
-            send_message("We're the best!")
-        elif 'wsg' in text_lower:
-            send_message("God is good")
-        elif '!kill' in text_lower:
-            send_message("Error: Only God himself can use this command")
-        elif 'cooper is my pookie' in text_lower:
-            send_message("me too bro")
-        elif 'wrx is tall' in text_lower:
-            send_message("Wrx considers a chihuahua to be a large dog")
-        elif 'https:' in text and not any(att.get("type") == "video" for att in attachments):
-            send_message("Delete this, links are not allowed, admins have been notified")
-        elif 'france' in text_lower:
-            send_message("please censor that to fr*nce")
-        elif 'french' in text_lower:
-            send_message("please censor that to fr*nch")
 
         # Daily Count
         if user_id and text:
@@ -1479,156 +1070,25 @@ def webhook():
         return '', 500
 
 # -----------------------
-# Admin Endpoints
-# -----------------------
-@app.route('/reset-count', methods=['POST'])
-def reset_count():
-    try:
-        data = request.get_json()
-        user_id = data.get('user_id')
-        if not user_id:
-            return {"error": "user_id required"}, 400
-        old_count = int(user_swear_counts.get(str(user_id), 0))
-        user_swear_counts[str(user_id)] = 0
-        save_json(user_swear_counts_file, user_swear_counts)
-        return {"success": True, "old_count": old_count, "new_count": 0}
-    except Exception as e:
-        logger.error(f"Reset count error: {e}")
-        return {"error": str(e)}, 500
-
-# -----------------------
-# Ban Service Blueprint
-# -----------------------
-ban_bp = Blueprint('ban_service', __name__, url_prefix='/ban-service')
-
-@ban_bp.route("/ban", methods=["POST"])
-def ban_endpoint():
-    try:
-        data = request.get_json(force=True)
-        user_id = data.get('user_id')
-        username = data.get('username', 'Unknown')
-        reason = data.get('reason', 'Policy violation')
-        if not user_id:
-            return jsonify({"error": "user_id required"}), 400
-        logger.info(f"Ban request for {username} ({user_id}): {reason}")
-        success = ban_user(user_id, username, reason)
-        return jsonify({"success": success, "user_id": str(user_id), "username": username, "reason": reason}), (200 if success else 400)
-    except Exception as e:
-        logger.exception("Error in ban endpoint")
-        return jsonify({"error": str(e)}), 500
-
-@ban_bp.route("/test-membership", methods=["POST"])
-def test_membership():
-    try:
-        data = request.get_json(force=True)
-        user_id = data.get('user_id')
-        if not user_id:
-            return jsonify({"error": "user_id required"}), 400
-        membership_id = get_user_membership_id(user_id)
-        return jsonify({"user_id": str(user_id), "membership_id": membership_id, "found": membership_id is not None}), 200
-    except Exception as e:
-        logger.exception("Error in test-membership")
-        return jsonify({"error": str(e)}), 500
-
-@ban_bp.route("/members", methods=["GET"])
-def members():
-    try:
-        url = f"{GROUPME_API}/groups/{GROUP_ID}?token={ACCESS_TOKEN}"
-        response = requests.get(url, timeout=8)
-        if response.status_code == 401:
-            return jsonify({"error": "ACCESS TOKEN INVALID"}), 401
-        if response.status_code != 200:
-            return jsonify({"error": f"Failed: {response.status_code}"}), 500
-        group_data = response.json()
-        members = group_data.get('response', {}).get('members', [])
-        member_list = []
-        for member in members:
-            member_list.append({
-                "id": member.get('id'),
-                "user_id": member.get('user_id'),
-                "nickname": member.get('nickname'),
-                "name": member.get('name')
-            })
-        return jsonify({
-            "group_id": GROUP_ID,
-            "member_count": len(member_list),
-            "members": member_list
-        }), 200
-    except Exception as e:
-        logger.exception("Error getting members")
-        return jsonify({"error": str(e)}), 500
-
-@ban_bp.route("/health", methods=["GET"])
-def ban_health():
-    return jsonify({
-        "status": "healthy" if ACCESS_TOKEN and GROUP_ID else "missing config",
-        "service": "GroupMe Ban Service",
-        "group_id": GROUP_ID or "MISSING",
-        "access_token": "SET" if ACCESS_TOKEN else "MISSING"
-    }), 200
-
-@ban_bp.route("/", methods=["GET"])
-def ban_root():
-    return jsonify({
-        "service": "GroupMe Ban Service",
-        "endpoints": {
-            "POST /ban": "Ban a user",
-            "POST /test-membership": "Test membership ID",
-            "GET /members": "List members",
-            "GET /health": "Health check"
-        }
-    }), 200
-
-app.register_blueprint(ban_bp)
-
-# -----------------------
-# Health
-# -----------------------
-@app.route('/health', methods=['GET'])
-def health():
-    bot_id_brief = (BOT_ID[:8] + "...") if BOT_ID else "MISSING"
-    return jsonify({
-        "status": "healthy" if BOT_ID and ACCESS_TOKEN and GROUP_ID else "missing config",
-        "service": "GroupMe Bot + Ban Service",
-        "bot_id": bot_id_brief,
-        "bot_name": BOT_NAME,
-        "group_id": GROUP_ID or "MISSING",
-        "access_token": "SET" if ACCESS_TOKEN else "MISSING",
-        "system_messages_enabled": system_messages_enabled,
-        "ban_system": {
-            "enabled": bool(GROUP_ID and ACCESS_TOKEN),
-            "instant_ban_words": len(INSTANT_BAN_WORDS),
-            "regular_swear_words": len(REGULAR_SWEAR_WORDS),
-            "tracked_users": len(user_swear_counts),
-            "banned_users": len(banned_users),
-            "former_members": len(former_members),
-            "strikes_tracked": len(user_strikes)
-        }
-    }), 200
-
-# -----------------------
 # Keep-Alive
 # -----------------------
-def keep_alive_task(poll_interval_sec: int = 300, self_ping: bool = True, port: int = PORT):
-    health_url = f"http://127.0.0.1:{port}/health"
+def keep_alive_task(self_ping: bool, port: int):
+    if not self_ping:
+        return
+    import urllib.request
+    url = f"http://127.0.0.1:{port}"
     while True:
         try:
-            logger.info("Keep-alive ping")
-            if self_ping:
-                try:
-                    resp = requests.get(health_url, timeout=6)
-                    logger.info(f"Self-ping -> {resp.status_code}")
-                except Exception as e:
-                    logger.warning(f"Self-ping failed: {e}")
-        except Exception:
-            logger.exception("Keep-alive error")
-        time.sleep(poll_interval_sec)
+            urllib.request.urlopen(url, timeout=5)
+        except:
+            pass
+        time.sleep(300)
 
 # -----------------------
 # Main
 # -----------------------
 if __name__ == "__main__":
-    logger.info("Starting Combined GroupMe Bot + Ban Service")
+    logger.info("Starting Combined GroupMe Bot + Stock Game")
     logger.info(f"Group ID: {GROUP_ID or 'MISSING'}")
     logger.info(f"Bot ID: {'SET' if BOT_ID else 'MISSING'}")
 
