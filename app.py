@@ -14,10 +14,10 @@ import random
 
 app = Flask(__name__)
 
-# --- CONFIG ---
-ACCESS_TOKEN = os.getenv("ACCESS_TOKEN")  # GroupMe API token
-GROUP_ID = os.getenv("GROUP_ID")          # Main group ID
-BOT_ID = os.getenv("BOT_ID")              # Bot ID
+# --- MERGED CONFIG ---
+ACCESS_TOKEN = os.getenv("ACCESS_TOKEN")  # Shared: GroupMe API token
+GROUP_ID = os.getenv("GROUP_ID")  # Shared: Group ID
+BOT_ID = os.getenv("BOT_ID")
 BOT_NAME = os.getenv("BOT_NAME", "ClankerBot")
 PORT = int(os.getenv("PORT", 5000))
 SELF_PING = os.getenv("KEEP_ALIVE_SELF_PING", "true").lower() in ("1", "true", "yes")
@@ -565,23 +565,30 @@ def get_strikes_report(target_alias: str, requester_name: str, requester_id: str
 # Violation Detection with Deletion
 # -----------------------
 def check_for_violations(text: str, user_id: str, username: str, message_id: str) -> bool:
+    """
+    Check for muted users first, then swears/instant bans.
+    Deletes message + sends warning if muted or violation.
+    """
     uid = str(user_id)
     now = time.time()
     deleted = False
 
+    # === MUTE CHECK: Auto-delete if user is muted ===
     if uid in muted_users and now < muted_users[uid]:
         minutes_left = int((muted_users[uid] - now) / 60) + 1
         if delete_message(message_id):
             logger.info(f"MUTED MSG DELETED: {username} ({uid}), {minutes_left}m left")
             deleted = True
-        return deleted
+        return deleted  # Skip swear checks
 
+    # === Clean expired mutes ===
     expired = [u for u, until in list(muted_users.items()) if now >= until]
     for u in expired:
         del muted_users[u]
     if expired:
         logger.info(f"Cleaned {len(expired)} expired mutes")
 
+    # === Instant Ban Words ===
     text_lower = text.lower()
     text_words = text_lower.split()
     for word in text_words:
@@ -595,6 +602,7 @@ def check_for_violations(text: str, user_id: str, username: str, message_id: str
             deleted = True
             return True
 
+    # === Regular Swear Words (Strike System) ===
     for word in text_words:
         clean_word = word.strip('.,!?"\'()[]{}').lower()
         if clean_word in REGULAR_SWEAR_WORDS:
@@ -619,7 +627,7 @@ def check_for_violations(text: str, user_id: str, username: str, message_id: str
                 remaining = 10 - current_count
                 send_system_message(f"{username} ({uid}) - Warning {current_count}/10 for inappropriate language. {remaining} more and you're banned! (Message deleted)")
             deleted = True
-            break
+            break  # Only one swear per message
 
     return deleted
 
@@ -820,7 +828,9 @@ def load_game_data() -> Dict[str, Any]:
     try:
         resp = requests.get(url, headers=headers, timeout=5)
         resp.raise_for_status()
-        return resp.json().get("record", {})
+        data = resp.json().get("record", {})
+        data["has_minted"] = set(data.get("has_minted", []))
+        return data
     except Exception as e:
         logger.error(f"Jsonbin load error: {e}")
         return {}
@@ -828,10 +838,12 @@ def load_game_data() -> Dict[str, Any]:
 def save_game_data(data: Dict[str, Any]) -> bool:
     if not JSONBIN_MASTER_KEY or not JSONBIN_BIN_ID:
         return False
+    save_data = data.copy()
+    save_data["has_minted"] = list(save_data["has_minted"])
     url = f"https://api.jsonbin.io/v3/b/{JSONBIN_BIN_ID}"
     headers = {"X-Master-Key": JSONBIN_MASTER_KEY, "Content-Type": "application/json"}
     try:
-        resp = requests.put(url, headers=headers, json=data, timeout=5)
+        resp = requests.put(url, headers=headers, json=save_data, timeout=5)
         resp.raise_for_status()
         return True
     except Exception as e:
@@ -840,228 +852,411 @@ def save_game_data(data: Dict[str, Any]) -> bool:
 
 # Game Data Init
 game_data = load_game_data() or {
-    "companies": {},
-    "portfolios": {},
-    "credits": {}
+    "nfts": {},
+    "balances": {},
+    "has_minted": set(),
+    "pending_rarity": {}
 }
-pending_actions = {}
+next_nft_id = max([int(k) for k in game_data["nfts"]], default=0) + 1
 
 # -----------------------
-# Subgroup Helpers
+# Get Message Likes
 # -----------------------
-def create_subgroup(topic="StockMarket", description="Stock Game Channel", group_type="private"):
-    url = f"{GROUPME_API}/groups/{GROUP_ID}/subgroups?token={ACCESS_TOKEN}"
-    payload = {"topic": topic, "description": description, "group_type": group_type}
+def get_message_likes(message_id: str) -> int:
+    url = f"{GROUPME_API}/groups/{GROUP_ID}/messages/{message_id}?token={ACCESS_TOKEN}"
     try:
-        resp = requests.post(url, json=payload, timeout=8)
-        if resp.status_code == 201:
-            subgroup_id = resp.json().get('response', {}).get('id')
-            logger.info(f"Created subgroup {topic} (ID: {subgroup_id})")
-            return subgroup_id
+        resp = requests.get(url, timeout=8)
+        if resp.status_code == 200:
+            msg = resp.json().get('response', {}).get('message', {})
+            return len(msg.get('favorited_by', []))
         else:
-            logger.error(f"Subgroup create failed: {resp.status_code} - {resp.text}")
-            return None
+            logger.error(f"Get likes failed: {resp.status_code}")
+            return 0
     except Exception as e:
-        logger.error(f"Subgroup create error: {e}")
-        return None
+        logger.error(f"Get likes error: {e}")
+        return 0
 
 # -----------------------
-# Webhook
+# Rarity Update Thread
 # -----------------------
-@app.route('/', methods=['GET', 'POST'])
-def root():
-    if request.method == 'POST':
-        logger.warning(f"POST to root / from {request.remote_addr} - redirecting to /webhook")
-        return webhook()
-    return jsonify({
-        "message": "GroupMe Bot is running",
-        "webhook": "/webhook",
-        "health": "/health"
-    }), 200
+def rarity_update_worker():
+    while True:
+        try:
+            now = time.time()
+            updated = False
+            for nft_id, info in list(game_data["pending_rarity"].items()):
+                if now - info["mint_time"] >= 86400:  # 24 hours
+                    likes = get_message_likes(info["message_id"])
+                    rarity = min(10, max(1, likes // 2 + 1))  # e.g., 0 likes =1, 2=2, 20+=10
+                    game_data["nfts"][nft_id]["rarity"] = rarity
+                    game_data["nfts"][nft_id]["price"] = rarity * 50  # Update price
+                    send_dm(game_data["nfts"][nft_id]["owner"], f"Your MemeNFT #{nft_id} rarity updated to {rarity} based on {likes} likes!")
+                    del game_data["pending_rarity"][nft_id]
+                    updated = True
+            if updated:
+                save_game_data(game_data)
+        except Exception as e:
+            logger.error(f"Rarity worker error: {e}")
+        time.sleep(3600)  # Check hourly
+
+# Start Thread
+t_rarity = threading.Thread(target=rarity_update_worker, daemon=True)
+t_rarity.start()
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
     try:
-        global system_messages_enabled, game_data, pending_actions
+        global system_messages_enabled, game_data, next_nft_id, pending_actions
         data = request.get_json()
         if not data:
             return '', 200
+
         text = data.get('text', '') or ''
         sender_type = data.get('sender_type')
         sender = data.get('name', 'Someone')
         user_id = str(data.get('user_id')) if data.get('user_id') is not None else None
         message_id = data.get('id')
         text_lower = text.lower()
+        attachments = data.get("attachments", [])
         is_dm = 'group_id' not in data or not data['group_id']
 
-        # DM Reply Handling
-        if is_dm and user_id in pending_actions:
-            action = pending_actions[user_id]
-            if action['action'] == 'buy':
-                try:
-                    amount = int(text.strip())
-                    company = action['company']
-                    price = game_data['companies'][company]['value']
-                    cost = amount * price
-                    credits = game_data['credits'].get(user_id, 0)
-                    if cost > credits:
-                        send_dm(user_id, "Not enough credits!")
-                    else:
-                        game_data['credits'][user_id] -= cost
-                        game_data['portfolios'][user_id][company] = game_data['portfolios'][user_id].get(company, 0) + amount
-                        save_game_data(game_data)
-                        send_dm(user_id, f"Bought {amount} {company} shares for {cost} Credits.")
-                except ValueError:
-                    send_dm(user_id, "Invalid amount—try a number.")
-            elif action['action'] == 'sell':
-                try:
-                    amount = int(text.strip())
-                    company = action['company']
-                    owned = game_data['portfolios'].get(user_id, {}).get(company, 0)
-                    if amount > owned:
-                        send_dm(user_id, "You don't own that many!")
-                    else:
-                        game_data['credits'][user_id] += amount * game_data['companies'][company]['value']
-                        game_data['portfolios'][user_id][company] -= amount
-                        if game_data['portfolios'][user_id][company] == 0:
-                            del game_data['portfolios'][user_id][company]
-                        save_game_data(game_data)
-                        send_dm(user_id, f"Sold {amount} {company} shares.")
-                except ValueError:
-                    send_dm(user_id, "Invalid amount.")
-            del pending_actions[user_id]
-            return '', 200
-
-        # System Events
+        # === SYSTEM MESSAGES (Join / Leave / Ban) ===
         if sender_type == "system" or is_system_message(data):
             if is_real_system_event(text_lower):
-                if 'has left the group' in text_lower:
+                if 'has left the group' in text_lower or 'was removed from the group' in text_lower:
                     key = user_id or f"ghost-{sender}"
                     former_members[str(key)] = sender
                     save_json(former_members_file, former_members)
                     send_system_message("GAY")
                 elif 'has joined the group' in text_lower:
                     send_system_message("Welcome to Clean Memes, check the rules and announcement topics before chatting!")
-                elif 'was removed from the group' in text_lower or 'removed' in text_lower:
-                    key = user_id or f"ghost-{sender}"
-                    former_members[str(key)] = sender
-                    save_json(former_members_file, former_members)
-                    send_system_message("this could be you if you break the rules, watch it.")
                 elif 'has rejoined the group' in text_lower:
                     send_system_message("oh look who's back")
             return '', 200
         if sender_type not in ['user']:
             return '', 200
 
-        # Game Commands
-        if text_lower.strip() == '!startgame' and str(user_id) in ADMIN_IDS:
-            subgroup_id = create_subgroup()
-            if subgroup_id:
-                send_message("StockMarket game started! Join the subgroup for trading.")
+        # === DM REPLY HANDLING (Trade Confirmations) ===
+        if is_dm and user_id in pending_actions:
+            action = pending_actions[user_id]
+            if action["action"] == "trade_accept" and text_lower.strip() == "yes":
+                sender_id = action["sender"]
+                nft_id = action["nft_id"]
+                if nft_id not in game_data["nfts"]:
+                    send_dm(user_id, "Trade failed — NFT no longer exists.")
+                else:
+                    nft = game_data["nfts"][nft_id]
+                    old_owner = nft["owner"]
+                    nft["owner"] = user_id
+                    save_game_data(game_data)
+                    send_message(f"**TRADE COMPLETE**! <@{user_id}> accepted MemeNFT #{nft_id} from <@{sender_id}>!")
+                del pending_actions[user_id]
+                if sender_id in pending_actions:
+                    del pending_actions[sender_id]
             return '', 200
 
-        if text_lower.startswith('!found '):
-            company = text[len('!found '):].strip()
-            if company in game_data["companies"]:
-                send_message(f"> @{sender}: Company exists!")
-            else:
-                game_data["companies"][company] = {"ceo": user_id, "shares": 1000, "value": 100, "members": [user_id]}
-                game_data["portfolios"][user_id] = {company: 500}
-                game_data["credits"][user_id] = 500
-                save_game_data(game_data)
-                send_message(f"{sender} founded {company}!")
+        # === VIOLATION CHECK (Swear Filter, Mute, Ban) ===
+        if user_id and text and message_id:
+            deleted = check_for_violations(text, user_id, sender, str(message_id))
+            if deleted:
+                return '', 200
+
+        # === DAILY MESSAGE COUNT ===
+        if user_id and text:
+            increment_user_message_count(user_id, sender, text)
+
+        # === ADMIN COMMANDS ===
+        if text_lower.startswith('!mute '):
+            if str(user_id) not in ADMIN_IDS:
+                send_system_message(f"> @{sender}: {text}\nOnly admins can use !mute")
+                return '', 200
+            parts = text.split()
+            if len(parts) < 2:
+                send_system_message(f"> @{sender}: Usage: `!mute @User [minutes]`")
+                return '', 200
+            target_name = parts[1].lstrip('@')
+            minutes = int(parts[2]) if len(parts) > 2 else 30
+            target = fuzzy_find_member(target_name)
+            if not target:
+                send_system_message(f"> @{sender}: User not found")
+                return '', 200
+            target_id, target_nick = target
+            muted_users[target_id] = time.time() + minutes * 60
+            send_system_message(f"{target_nick} has been muted for {minutes} minute(s).")
             return '', 200
 
-        if text_lower.startswith('!join '):
-            company = text[len('!join '):].strip()
-            if company not in game_data["companies"]:
-                send_message(f"> @{sender}: Company not found!")
-            elif user_id in game_data["companies"][company]["members"]:
-                send_message(f"> @{sender}: Already joined!")
+        if text_lower.startswith('!unmute '):
+            if str(user_id) not in ADMIN_IDS:
+                send_system_message(f"> @{sender}: Only admins can use !unmute")
+                return '', 200
+            target_name = text[len('!unmute '):].strip().lstrip('@')
+            target = fuzzy_find_member(target_name)
+            if not target:
+                send_system_message(f"> @{sender}: User not found")
+                return '', 200
+            target_id, _ = target
+            if target_id in muted_users:
+                del muted_users[target_id]
+                send_system_message(f"{target_name} has been unmuted.")
             else:
-                game_data["companies"][company]["members"].append(user_id)
-                game_data["portfolios"][user_id] = game_data["portfolios"].get(user_id, {}) | {company: 10}
-                game_data["credits"][user_id] = game_data["credits"].get(user_id, 500)
-                save_game_data(game_data)
-                send_message(f"{sender} joined {company}!")
+                send_system_message(f"{target_name} was not muted.")
+            return '', 200
+
+        if text_lower.startswith('!ban '):
+            if str(user_id) not in ADMIN_IDS:
+                send_system_message(f"> @{sender}: Only admins can use !ban")
+                return '', 200
+            target_name = text[len('!ban '):].strip().lstrip('@')
+            ban_user_command(target_name, sender, user_id, text)
+            return '', 200
+
+        if text_lower.startswith('!unban '):
+            if str(user_id) not in ADMIN_IDS:
+                send_system_message(f"> @{sender}: Only admins can use !unban")
+                return '', 200
+            target_name = text[len('!unban '):].strip().lstrip('@')
+            unban_user(target_name, sender, user_id, text)
+            return '', 200
+
+        if text_lower.startswith('!delete '):
+            if str(user_id) not in ADMIN_IDS:
+                send_system_message(f"> @{sender}: Only admins can use !delete")
+                return '', 200
+            try:
+                msg_id = text.split()[1]
+                if delete_message(msg_id):
+                    send_system_message(f"Message {msg_id} deleted by @{sender}.")
+                else:
+                    send_system_message(f"Failed to delete message {msg_id}.")
+            except:
+                send_system_message("Usage: `!delete MESSAGE_ID`")
+            return '', 200
+
+        if text_lower.startswith('!getid '):
+            target_name = text[len('!getid '):].strip().lstrip('@')
+            get_user_id(target_name, sender, user_id, text)
+            return '', 200
+
+        if text_lower.startswith('!strike '):
+            if str(user_id) not in ADMIN_IDS:
+                send_system_message(f"> @{sender}: Only admins can issue strikes")
+                return '', 200
+            target_name = text[len('!strike '):].strip().lstrip('@')
+            record_strike(target_name, sender, user_id, text)
+            return '', 200
+
+        if text_lower.startswith('!strikes '):
+            if str(user_id) not in ADMIN_IDS:
+                send_system_message(f"> @{sender}: Only admins can view strikes")
+                return '', 200
+            target_name = text[len('!strikes '):].strip().lstrip('@')
+            get_strikes_report(target_name, sender, user_id, text)
+            return '', 200
+
+        if text_lower == '!system on' and str(user_id) in ADMIN_IDS:
+            system_messages_enabled = True
+            save_system_messages_enabled(True)
+            send_system_message("System messages **ENABLED** by admin.")
+            return '', 200
+
+        if text_lower == '!system off' and str(user_id) in ADMIN_IDS:
+            system_messages_enabled = False
+            save_system_messages_enabled(False)
+            send_system_message("System messages **DISABLED** by admin.")
+            return '', 200
+
+        # === MEME NFT COMMANDS ===
+        if text_lower.strip() == '!memeupload' and attachments:
+            image_att = next((att for att in attachments if att.get("type") == "image"), None)
+            if not image_att:
+                send_message(f"@{sender} Upload an image with `!memeupload`!")
+                return '', 200
+            if user_id in game_data["has_minted"]:
+                send_message(f"@{sender} One mint per player! You already uploaded.")
+                return '', 200
+
+            img_url = image_att.get("url")
+            nft_id = str(next_nft_id)
+
+            game_data["nfts"][nft_id] = {
+                "owner": user_id,
+                "url": img_url,
+                "rarity": 1,
+                "price": 50,
+                "listed": False,
+                "name": f"{sender}'s Meme"
+            }
+            game_data["balances"][user_id] = game_data["balances"].get(user_id, 500)
+            game_data["has_minted"].add(user_id)
+            game_data["pending_rarity"][nft_id] = {
+                "message_id": message_id,
+                "mint_time": time.time()
+            }
+            save_game_data(game_data)
+            next_nft_id += 1
+
+            send_message(
+                f"**{sender} MINTED MemeNFT #{nft_id}!**\n"
+                f"**Initial Rarity:** 1/10 | **Price:** 50 Coins\n"
+                f"*Final rarity set in 24h based on likes!*\n"
+                f"[View Meme]({img_url})"
+            )
+            return '', 200
+
+        if text_lower.strip() == '!mymeme':
+            owned = [nft for nft_id, nft in game_data["nfts"].items() if nft["owner"] == user_id]
+            if not owned:
+                send_message(f"@{sender} No meme yet! Use `!memeupload` with an image.")
+                return '', 200
+            nft = owned[0]
+            nft_id = next(k for k, v in game_data["nfts"].items() if v == nft)
+            status = "Listed" if nft["listed"] else "In Wallet"
+            send_message(
+                f"**Your MemeNFT #{nft_id}**\n"
+                f"**{nft['name']}** | Rarity: **{nft['rarity']}/10** | Price: **{nft['price']} Coins**\n"
+                f"Status: {status}\n"
+                f"[View]({nft['url']})"
+            )
             return '', 200
 
         if text_lower.startswith('!buy '):
-            company = text[len('!buy '):].strip()
-            if company not in game_data["companies"]:
-                send_message(f"> @{sender}: Company not found!")
-            else:
-                pending_actions[user_id] = {"action": "buy", "company": company}
-                max_aff = game_data["credits"].get(user_id, 0) // game_data["companies"][company]["value"]
-                send_dm(user_id, f"How many {company} shares? (Price: {game_data['companies'][company]['value']}/share, Max: {max_aff})")
-            return '', 200
+            try:
+                nft_id = text[len('!buy '):].strip()
+                if nft_id not in game_data["nfts"]:
+                    send_message("NFT not found!")
+                    return '', 200
+                nft = game_data["nfts"][nft_id]
+                if not nft["listed"]:
+                    send_message("This NFT is not for sale!")
+                    return '', 200
+                if nft["owner"] == user_id:
+                    send_message("You already own this!")
+                    return '', 200
+                cost = nft["price"]
+                balance = game_data["balances"].get(user_id, 0)
+                if cost > balance:
+                    send_message("Not enough MemeCoins!")
+                    return '', 200
 
-        if text_lower.startswith('!sell '):
-            company = text[len('!sell '):].strip()
-            if company not in game_data["companies"]:
-                send_message(f"> @{sender}: Company not found!")
-            else:
-                pending_actions[user_id] = {"action": "sell", "company": company}
-                owned = game_data["portfolios"].get(user_id, {}).get(company, 0)
-                send_dm(user_id, f"How many {company} shares to sell? (You own: {owned})")
-            return '', 200
+                old_owner = nft["owner"]
+                nft["owner"] = user_id
+                nft["listed"] = False
+                game_data["balances"][user_id] -= cost
+                game_data["balances"][old_owner] = game_data["balances"].get(old_owner, 0) + cost
+                save_game_data(game_data)
+
+                send_message(
+                    f"**SOLD!** <@{user_id}> bought MemeNFT #{nft_id} for **{cost} Coins** from <@{old_owner}>!\n"
+                    f"[View]({nft['url']})"
+                )
+                return '', 200
+            except:
+                send_message("Usage: `!buy ID`")
+                return '', 200
+
+        if text_lower.startswith('!list '):
+            try:
+                parts = text[len('!list '):].strip().split()
+                nft_id = parts[0]
+                price = int(parts[1])
+                if nft_id not in game_data["nfts"]:
+                    send_message("NFT not found!")
+                    return '', 200
+                nft = game_data["nfts"][nft_id]
+                if nft["owner"] != user_id:
+                    send_message("You don't own this NFT!")
+                    return '', 200
+                if price < 10:
+                    send_message("Minimum price: 10 Coins")
+                    return '', 200
+                nft["listed"] = True
+                nft["price"] = price
+                save_game_data(game_data)
+                send_message(f"MemeNFT #{nft_id} listed for **{price} Coins**!")
+                return '', 200
+            except:
+                send_message("Usage: `!list ID Price`")
+                return '', 200
 
         if text_lower.startswith('!trade '):
-            parts = text[len('!trade '):].strip().split()
-            if len(parts) < 3 or not parts[0].startswith('@'):
-                send_message(f"> @{sender}: Usage: !trade @user Company Shares")
-            else:
-                target_name = parts[0][1:]
-                company = parts[1]
-                try:
-                    shares = int(parts[2])
-                except:
-                    send_message(f"> @{sender}: Invalid shares.")
-                    return '', 200
+            try:
+                parts = text[len('!trade '):].strip().split()
+                target_name = parts[0].lstrip('@')
+                nft_id = parts[1]
                 target = fuzzy_find_member(target_name)
                 if not target:
-                    send_message(f"> @{sender}: User not found!")
-                elif company not in game_data["companies"]:
-                    send_message(f"> @{sender}: Company not found!")
-                elif game_data["portfolios"].get(user_id, {}).get(company, 0) < shares:
-                    send_message(f"> @{sender}: Not enough shares!")
-                else:
-                    target_id, _ = target
-                    send_dm(user_id, f"Confirm: Send {shares} {company} to @{target_name}? Reply YES")
-                    send_dm(target_id, f"@{sender} offers {shares} {company} shares. Reply YES to accept.")
-                    pending_actions[user_id] = {"action": "trade_sender", "target": target_id, "company": company, "shares": shares}
-                    pending_actions[target_id] = {"action": "trade_target", "sender": user_id, "company": company, "shares": shares}
-            return '', 200
+                    send_message("User not found!")
+                    return '', 200
+                target_id, _ = target
+                if nft_id not in game_data["nfts"]:
+                    send_message("NFT not found!")
+                    return '', 200
+                nft = game_data["nfts"][nft_id]
+                if nft["owner"] != user_id:
+                    send_message("You don't own this NFT!")
+                    return '', 200
 
-        if text_lower.strip() == '!myportfolio':
-            portfolio = game_data["portfolios"].get(user_id, {})
-            credits = game_data["credits"].get(user_id, 0)
-            msg = f"Your Portfolio (Credits: {credits})\n" + "\n".join(f"{co}: {sh} shares" for co, sh in portfolio.items()) or "Empty"
-            send_dm(user_id, msg)
-            return '', 200
+                pending_actions[user_id] = {"action": "trade_offer", "target": target_id, "nft_id": nft_id}
+                pending_actions[target_id] = {"action": "trade_accept", "sender": user_id, "nft_id": nft_id}
 
-        if text_lower.strip() == '!leaderboard':
-            if not game_data["companies"]:
-                send_message("No companies yet!")
+                send_dm(user_id, f"Trade offer sent for MemeNFT #{nft_id} to @{target_name}. Waiting for YES...")
+                send_dm(target_id, f"<@{user_id}> wants to trade you MemeNFT #{nft_id}. Reply **YES** in DM to accept.")
+                return '', 200
+            except:
+                send_message("Usage: `!trade @User ID`")
+                return '', 200
+
+        if text_lower.strip() == '!market':
+            listed = []
+            for nid, nft in game_data["nfts"].items():
+                if nft["listed"]:
+                    listed.append(f"#{nid} — **{nft['price']} Coins** (Rarity {nft['rarity']}) by <@{nft['owner']}>")
+            if not listed:
+                send_message("**Meme Market**\nNothing for sale yet!")
             else:
-                sorted_cos = sorted(game_data["companies"].items(), key=lambda kv: -kv[1]["value"])
-                msg = "Top Empires:\n" + "\n".join(f"{i+1}. {co} (Value: {data['value']})" for i, (co, data) in enumerate(sorted_cos[:5]))
+                msg = "**Meme Market**\n" + "\n".join(listed[:10])
+                if len(listed) > 10:
+                    msg += f"\n...and {len(listed)-10} more!"
                 send_message(msg)
             return '', 200
 
-        if text_lower.strip() == '!endgame' and str(user_id) in ADMIN_IDS:
-            send_message("Game ended! Final results coming...")
-            game_data = {"companies": {}, "portfolios": {}, "credits": {}}
-            save_game_data(game_data)
+        if text_lower.strip() == '!collection':
+            owned = [nft for nft in game_data["nfts"].values() if nft["owner"] == user_id]
+            if not owned:
+                send_dm(user_id, "You own no NFTs! Mint with `!memeupload`.")
+                return '', 200
+            lines = []
+            for nid, nft in game_data["nfts"].items():
+                if nft["owner"] == user_id:
+                    lines.append(f"#{nid} | {nft['name']} | Rarity: {nft['rarity']} | Value: {nft['price']}")
+            send_dm(user_id, "**Your Collection**\n" + "\n".join(lines))
             return '', 200
 
-        # Violation Check
-        if user_id and text and message_id:
-            check_for_violations(text, user_id, sender, str(message_id))
+        if text_lower.strip() == '!leaderboard':
+            portfolio = {}
+            for uid in set(nft["owner"] for nft in game_data["nfts"].values()):
+                value = sum(nft["price"] for nft in game_data["nfts"].values() if nft["owner"] == uid)
+                value += game_data["balances"].get(uid, 0)
+                portfolio[uid] = value
+            if not portfolio:
+                send_message("No portfolios yet!")
+                return '', 200
+            top = sorted(portfolio.items(), key=lambda x: -x[1])[:5]
+            lines = [f"{i+1}. <@{uid}> — **{val} Total Value**" for i, (uid, val) in enumerate(top)]
+            send_message("**Top Meme Collectors**\n" + "\n".join(lines))
+            return '', 200
 
-        # Daily Count
-        if user_id and text:
-            increment_user_message_count(user_id, sender, text)
+        if text_lower.strip() == '!resetmeme' and str(user_id) in ADMIN_IDS:
+            game_data = {
+                "nfts": {},
+                "balances": {},
+                "has_minted": set(),
+                "pending_rarity": {}
+            }
+            next_nft_id = 1
+            save_game_data(game_data)
+            send_message("Meme NFT game reset by admin!")
+            return '', 200
 
         return '', 200
 
@@ -1069,36 +1264,42 @@ def webhook():
         logger.error(f"Webhook error: {e}")
         return '', 500
 
-# -----------------------
-# Keep-Alive
-# -----------------------
-def keep_alive_task(self_ping: bool, port: int):
-    if not self_ping:
-        return
-    import urllib.request
-    url = f"http://127.0.0.1:{port}"
-    while True:
-        try:
-            urllib.request.urlopen(url, timeout=5)
-        except:
-            pass
-        time.sleep(300)
 
 # -----------------------
-# Main
+# Global Pending Actions (for DM trade replies)
+# -----------------------
+pending_actions = {}  # {user_id: {"action": "...", ...}}
+
+# -----------------------
+# Start Leaderboard Thread (Daily Unemployed)
+# -----------------------
+start_leaderboard_thread_once()
+
+# -----------------------
+# Keep-Alive Ping (Prevents Render/Heroku Sleep)
+# -----------------------
+def keep_alive():
+    if not SELF_PING:
+        return
+    def ping():
+        while True:
+            try:
+                requests.get(f"https://{request.host}", timeout=5)
+                logger.info("Self-ping sent to keep alive.")
+            except:
+                pass
+            time.sleep(600)  # 10 minutes
+    t = threading.Thread(target=ping, daemon=True)
+    t.start()
+
+# -----------------------
+# Flask App Run
 # -----------------------
 if __name__ == "__main__":
-    logger.info("Starting Combined GroupMe Bot + Stock Game")
-    logger.info(f"Group ID: {GROUP_ID or 'MISSING'}")
-    logger.info(f"Bot ID: {'SET' if BOT_ID else 'MISSING'}")
-
-    if not ACCESS_TOKEN or not GROUP_ID or not BOT_ID:
-        logger.error("Missing required env vars!")
-
-    t_keep = threading.Thread(target=keep_alive_task, kwargs={"self_ping": SELF_PING, "port": PORT}, daemon=True)
-    t_keep.start()
-    logger.info("Keep-alive thread started")
-
-    start_leaderboard_thread_once()
-
-    app.run(host="0.0.0.0", port=PORT, debug=False)
+    keep_alive()
+    try:
+        port = int(os.environ.get("PORT", 5000))
+        logger.info(f"Starting Flask app on port {port}")
+        app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
+    except Exception as e:
+        logger.error(f"Failed to start server: {e}")
