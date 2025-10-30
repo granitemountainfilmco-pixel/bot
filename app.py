@@ -1343,19 +1343,6 @@ def webhook():
 
             return '', 200
 
-Here's the fully corrected and properly indented version of your Impostor game logic — all syntax and indentation fixed, with safe variable access and consistent structure.
-python
-
-# Global game state (initialize once, outside the handler)
-game_state = 'inactive'
-players = set()
-impostor = None
-general_topic = None
-exact_thing = None
-
-# Inside your message handler function:
-user_id = str(user_id)  # Normalize early for consistency
-
 # Impostor Commands
 if text_lower.strip() == '!impostor':
     if user_id not in ADMIN_IDS:
