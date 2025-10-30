@@ -1365,7 +1365,8 @@ def webhook():
             players.add(user_id)
             send_message(f"{sender} joined the impostor game! Current players: {len(players)}")
             return '', 200
-elif text_lower.strip() == '!start':
+        
+        elif text_lower.strip() == '!start':
     if str(user_id) not in ADMIN_IDS:
         send_system_message(f"> @{sender}: {text}\nOnly admins can start the game.")
         return '', 200
