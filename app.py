@@ -1233,16 +1233,24 @@ def webhook():
             return '', 200
 
         if text_lower.strip() == '!mememoney':
+            # Build name lookup: user_id → nickname
+            members = get_group_members()
+            name_map = {str(m["user_id"]): m["nickname"] for m in members if m.get("user_id")}
+            name_map.update(former_members)  # include left/banned users
+
             portfolio = {}
-            for uid in set(nft["owner"] for nft in game_data["nfts"].values()):
+            for uid in {nft["owner"] for nft in game_data["nfts"].values()}:
                 value = sum(nft["price"] for nft in game_data["nfts"].values() if nft["owner"] == uid)
                 value += game_data["balances"].get(uid, 0)
                 portfolio[uid] = value
+
             if not portfolio:
                 send_message("No portfolios yet!")
                 return '', 200
+
             top = sorted(portfolio.items(), key=lambda x: -x[1])[:5]
-            lines = [f"{i+1}. <@{uid}> — **{val} Total Value**" for i, (uid, val) in enumerate(top)]
+            lines = [f"{i+1}. {name_map.get(uid, f'User {uid}')} — **{val} Total Value**" 
+                     for i, (uid, val) in enumerate(top)]
             send_message("**Top Meme Collectors**\n" + "\n".join(lines))
             return '', 200
 
