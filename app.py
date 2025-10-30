@@ -10,6 +10,7 @@ import json
 import re
 from typing import Dict, Any, Optional, Tuple, List
 from datetime import datetime, timedelta
+import random
 
 app = Flask(__name__)
 
@@ -677,6 +678,27 @@ def send_message(text: str) -> bool:
         logger.error(f"GroupMe send error: {e}")
         return False
 
+def send_dm(recipient_id: str, text: str) -> bool:
+    url = f"{GROUPME_API}/direct_messages"
+    payload = {
+        "direct_message": {
+            "recipient_id": recipient_id,
+            "source_guid": str(int(time.time() * 1000)),
+            "text": text
+        }
+    }
+    try:
+        response = requests.post(url, params={"token": ACCESS_TOKEN}, json=payload, timeout=8)
+        if response.status_code == 201:
+            logger.info(f"DM sent to {recipient_id}: {text[:30]}")
+            return True
+        else:
+            logger.error(f"DM failed {response.status_code}: {response.text}")
+            return False
+    except Exception as e:
+        logger.error(f"DM error: {e}")
+        return False
+
 # -----------------------
 # System Message Detection
 # -----------------------
@@ -794,6 +816,29 @@ def start_leaderboard_thread_once():
         logger.info("Leaderboard thread initialized.")
 
 # -----------------------
+# Impostor Gamemode
+# -----------------------
+TOPICS = [
+    ("a fruit", "apple"),
+    ("an animal", "dog"),
+    ("a color", "blue"),
+    ("a vehicle", "car"),
+    ("a city", "New York"),
+    ("a movie", "Inception"),
+    ("a food", "pizza"),
+    ("a sport", "soccer"),
+    ("a planet", "Earth"),
+    ("a book", "Harry Potter"),
+    # Add more as needed
+]
+
+game_state = 'inactive'
+players = set()
+impostor = None
+general_topic = None
+exact_thing = None
+
+# -----------------------
 # Webhook Root Fallback
 # -----------------------
 @app.route('/', methods=['GET', 'POST'])
@@ -813,7 +858,7 @@ def root():
 @app.route('/webhook', methods=['POST'])
 def webhook():
     try:
-        global system_messages_enabled
+        global system_messages_enabled, game_state, players, impostor, general_topic, exact_thing
         data = request.get_json()
         if not data:
             return '', 200
@@ -1013,6 +1058,70 @@ def webhook():
                 send_system_message(f"> @{sender}: {text}\n{target_nickname} unmuted.")
                 logger.info(f"UNMUTED: {target_nickname} ({target_user_id})")
 
+            return '', 200
+
+        # Impostor Commands
+        if text_lower.strip() == '!impostor':
+            if str(user_id) not in ADMIN_IDS:
+                send_system_message(f"> @{sender}: {text}\nOnly admins can start impostor game.")
+                return '', 200
+            if game_state != 'inactive':
+                send_system_message(f"> @{sender}: {text}\nGame already in progress.")
+                return '', 200
+            game_state = 'setup'
+            players.clear()
+            send_message("Impostor game starting! Use !join to join the game.")
+            return '', 200
+        elif text_lower.strip() == '!join':
+            if game_state != 'setup':
+                send_system_message(f"> @{sender}: {text}\nNo game setup currently.")
+                return '', 200
+            if user_id in players:
+                send_system_message(f"> @{sender}: {text}\nYou already joined.")
+                return '', 200
+            players.add(user_id)
+            send_message(f"{sender} joined the impostor game! Current players: {len(players)}")
+            return '', 200
+        elif text_lower.strip() == '!start':
+            if str(user_id) not in ADMIN_IDS:
+                send_system_message(f"> @{sender}: {text}\nOnly admins can start the game.")
+                return '', 200
+            if game_state != 'setup':
+                send_system_message(f"> @{sender}: {text}\nNo game to start.")
+                return '', 200
+            if len(players) < 3:
+                send_system_message(f"> @{sender}: {text}\nNeed at least 3 players.")
+                return '', 200
+            impostor = random.choice(list(players))
+            gen, ex = random.choice(TOPICS)
+            general_topic = gen
+            exact_thing = ex
+            members = get_group_members()
+            id_to_nick = {str(m['user_id']): m['nickname'] for m in members}
+            player_names = [id_to_nick.get(uid, 'Unknown') for uid in players]
+            send_message(f"Impostor game started!\nPlayers: {', '.join(player_names)}\nGeneral topic: {general_topic}")
+            for uid in players:
+                if uid != impostor:
+                    send_dm(str(uid), f"The exact thing is: {exact_thing}\nDon't tell anyone!")
+                else:
+                    send_dm(str(uid), "You are the impostor! Pretend to know the exact thing based on the general topic.")
+            game_state = 'running'
+            return '', 200
+        elif text_lower.strip() == '!end':
+            if str(user_id) not in ADMIN_IDS:
+                send_system_message(f"> @{sender}: {text}\nOnly admins can end the game.")
+                return '', 200
+            if game_state == 'inactive':
+                send_system_message(f"> @{sender}: {text}\nNo game running.")
+                return '', 200
+            members = get_group_members()
+            id_to_nick = {str(m['user_id']): m['nickname'] for m in members}
+            send_message(f"Game ended by {sender}.\nThe impostor was: {id_to_nick.get(impostor, 'Unknown')}\nExact thing: {exact_thing}")
+            game_state = 'inactive'
+            players.clear()
+            impostor = None
+            general_topic = None
+            exact_thing = None
             return '', 200
             
         # Violation Check
