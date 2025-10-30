@@ -849,7 +849,7 @@ pending_actions = {}
 # -----------------------
 # Subgroup Helpers
 # -----------------------
-def create_subgroup(topic="StockMarket", description="Stock Game Channel", group_type="announcement"):
+def create_subgroup(topic="StockMarket", description="Stock Game Channel", group_type="chat"):
     url = f"{GROUPME_API}/groups/{GROUP_ID}/subgroups?token={ACCESS_TOKEN}"
     payload = {"topic": topic, "description": description, "group_type": group_type}
     try:
