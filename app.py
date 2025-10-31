@@ -1354,7 +1354,7 @@ def webhook():
     #        send_message("**Top Meme Collectors**\n" + "\n".join(lines))
      #       return '', 200
 
-       if text_lower.strip() == '!unemployed':
+        if text_lower.strip() == 'leaderboard':
             msg = _build_leaderboard_message()
             send_message(msg)
             return '', 200
