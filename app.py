@@ -257,6 +257,23 @@ def get_user_membership_id(user_id, group_id=None):
         logger.exception(f"Error getting membership ID for {user_id}: {e}")
         return None
 
+def ban_command(target_alias: str, sender_name: str, sender_id: str, original_text: str, group_id: str) -> None:
+    if str(sender_id) not in ADMIN_IDS:
+        send_system_message(f"> @{sender_name}: {original_text}\nError: Only admins can use `!ban`.", group_id)
+        return
+
+    result = fuzzy_find_member(target_alias, group_id)
+    if not result:
+        send_system_message(f"> @{sender_name}: {original_text}\nUser not found: `{target_alias}`", group_id)
+        return
+
+    target_user_id, target_username = result
+    if call_ban_service(target_user_id, target_username, "Manual admin ban", group_id):
+        send_system_message(f"> @{sender_name}: {original_text}\n**{target_username}** has been **banned**.", group_id)
+        logger.info(f"Admin {sender_name} ({sender_id}) banned {target_username} ({target_user_id})")
+    else:
+        send_system_message(f"> @{sender_name}: {original_text}\nFailed to ban `{target_username}`.", group_id)
+
 def ban_user(user_id, username, reason, group_id=None):
     gid = group_id or GROUP_ID
     try:
@@ -284,6 +301,25 @@ def call_ban_service(user_id: str, username: str, reason: str, group_id=None) ->
         user_swear_counts.pop(str(user_id), None)
         save_json(user_swear_counts_file, user_swear_counts)
     return success
+
+# -----------------------
+# !delete - Admin delete any message
+# -----------------------
+def delete_command(message_id_str: str, sender_name: str, sender_id: str, original_text: str, group_id: str) -> None:
+    if str(sender_id) not in ADMIN_IDS:
+        send_system_message(f"> @{sender_name}: {original_text}\nError: Only admins can use `!delete`.", group_id)
+        return
+
+    if not message_id_str.isdigit():
+        send_system_message(f"> @{sender_name}: {original_text}\nUsage: `!delete <message_id>`", group_id)
+        return
+
+    message_id = message_id_str.strip()
+    if delete_message(message_id, group_id):
+        send_system_message(f"> @{sender_name}: {original_text}\nMessage `{message_id}` deleted.", group_id)
+        logger.info(f"Admin {sender_name} ({sender_id}) deleted message {message_id} in group {group_id}")
+    else:
+        send_system_message(f"> @{sender_name}: {original_text}\nFailed to delete message `{message_id}` (may not exist or already deleted).", group_id)
 
 # -------------------------------------------------
 # DAILY 100 COIN INFLATION — EVERY 24 HOURS
@@ -1206,6 +1242,11 @@ def webhook():
                 send_message("Usage: `!list ID Price`", current_group_id)
                 return '', 200
 
+        if text_lower.startswith('!delete '):
+            msg_id = text[len('!delete '):].strip()
+            delete_command(msg_id, sender, user_id, text, current_group_id)
+            return '', 200
+
         if text_lower.startswith('!trade '):
             try:
                 parts = text[len('!trade '):].strip().split()
@@ -1246,6 +1287,11 @@ def webhook():
                 if len(listed) > 10:
                     msg += f"\n...and {len(listed)-10} more!"
                 send_message(msg, current_group_id)
+            return '', 200
+
+        if text_lower.startswith('!ban '):
+            target = text[len('!ban '):].strip()
+            ban_command(target, sender, user_id, text, current_group_id)
             return '', 200
 
         if text_lower.strip() == '!collection':
