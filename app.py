@@ -1267,24 +1267,51 @@ def webhook():
                 # -------------------------------------------------
         # SHOW COLLECTION IN GROUP (NOT DM)
         # -------------------------------------------------
+        # -------------------------------------------------
+        # !collection – show in GROUP (chunked for length)
+        # -------------------------------------------------
         if text_lower.strip() == '!collection':
-            owned_nfts = [nft for nft_id, nft in game_data["nfts"].items() if nft["owner"] == user_id]
-            if not owned_nfts:
+            owned = [(nid, nft) for nid, nft in game_data["nfts"].items()
+                     if nft["owner"] == user_id]
+            if not owned:
                 send_message(f"@{sender} You don't own any MemeNFTs yet! Use `!memeupload`")
                 return '', 200
 
-            lines = [f"**{sender}'s Meme Collection** ({len(owned_nfts)} NFT{'' if len(owned_nfts)==1 else 's'})"]
-            for nft_id, nft in game_data["nfts"].items():
-                if nft["owner"] == user_id:
-                    status = "🟢 In Wallet" if not nft.get("listed") else f"🔴 Listed @ {nft['price']} Coins"
-                    lines.append(f"• **#{nft_id}** | {nft.get('name', 'Untitled')} | Rarity: **{nft['rarity']}/10** | {status}")
+            # Header
+            header = f"**{sender}'s Meme Collection** ({len(owned)} NFT{'s' if len(owned)>1 else ''})"
+            lines = [header]
 
-            # Truncate if too long
-            msg = "\n".join(lines)
-            if len(msg) > 1000:
-                msg = msg[:997] + "..."
+            for nid, nft in owned:
+                status = ("In Wallet" if not nft.get("listed")
+                          else f"Listed @ {nft['price']} Coins")
+                lines.append(
+                    f"• **#{nid}** | {nft.get('name','Untitled')} | Rarity: **{nft['rarity']}/10** | {status}"
+                )
 
-            send_message(msg)
+            # Optional total value
+            total = sum(nft["rarity"]*50 for _, nft in owned if not nft.get("listed"))
+            total += game_data["balances"].get(user_id, 0)
+            lines.append(f"**Total Portfolio Value: {total} Coins**")
+
+            # ---- Chunk into ≤ 900-char messages ----
+            msgs = []
+            cur = ""
+            for ln in lines:
+                if len(cur) + len(ln) + 1 > 900:          # +1 for \n
+                    msgs.append(cur.strip())
+                    cur = ln + "\n"
+                else:
+                    cur += ln + "\n"
+            if cur:
+                msgs.append(cur.strip())
+
+            # ---- Send each chunk ----
+            for i, m in enumerate(msgs):
+                if i > 0:
+                    time.sleep(1)                     # respect rate-limit
+                if not send_message(m):
+                    logger.error(f"Collection chunk {i+1} failed")
+                    break
             return '', 200
 
         if text_lower.strip() == '!mememoney':
