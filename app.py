@@ -1193,6 +1193,22 @@ def webhook():
             record_strike(target_name, sender, user_id, text)
             return '', 200
 
+                # === !google (or !g) – Wikipedia quick-search ===
+        if text_lower.startswith('!google ') or text_lower.startswith('!g '):
+            # Accept both "!google cats" and "!g cats"
+            prefix = '!google ' if text_lower.startswith('!google ') else '!g '
+            query = text[len(prefix):].strip()
+            if not query:
+                send_message("> Usage: `!google <search term>`  or  `!g <search term>`")
+                return '', 200
+
+            # Run the Wikipedia helper you already defined
+            answer = google_search(query)
+
+            # Quote the request so the bot can be mentioned in replies
+            send_message(f"> @{sender}: {answer}")
+            return '', 200
+
         if text_lower.startswith('!strikes '):
             if str(user_id) not in ADMIN_IDS:
                 send_system_message(f"> @{sender}: Only admins can view strikes")
