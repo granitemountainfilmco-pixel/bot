@@ -177,23 +177,23 @@ def get_user_membership_id(user_id):
         return None
 
 # -------------------------------------------------
-# NEW HELPERS (add near the top, after the imports)
+# NEW HELPERS – Add after existing helpers
 # -------------------------------------------------
 def _find_replied_message(data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """
-    GroupMe sends the original message inside `attachments` when a user
-    replies.  Return the dict of the original message or None.
+    GroupMe sends the original message inside `attachments` when a user replies.
+    Returns the replied-to message dict or None.
     """
     for att in data.get("attachments", []):
         if att.get("type") == "reply":
-            # The replied-to message is nested under `reply_to`
-            return att.get("reply_to") or att  # some payloads differ
+            return att.get("reply_to") or att
     return None
 
 
 def _delete_message_by_id(msg_id: str) -> bool:
     """
-    Centralised DELETE call – returns True on 204, False otherwise.
+    DELETE /conversations/:group_id/messages/:message_id
+    Returns True on 204, False otherwise.
     """
     url = f"{GROUPME_API}/conversations/{GROUP_ID}/messages/{msg_id}"
     try:
@@ -206,7 +206,7 @@ def _delete_message_by_id(msg_id: str) -> bool:
     except Exception as e:
         logger.exception(f"Delete error {msg_id}: {e}")
         return False
-
+        
 def ban_user(user_id, username, reason):
     try:
         membership_id = get_user_membership_id(user_id)
@@ -1024,50 +1024,45 @@ def webhook():
         if user_id and text:
             increment_user_message_count(user_id, sender, text)
 
-        # === ADMIN COMMANDS ===
-        # -------------------------------------------------
-# REPLACE THE ENTIRE `if text_lower.startswith('!mute '):` BLOCK
-# -------------------------------------------------
-if text_lower.startswith('!mute'):
-    if str(user_id) not in ADMIN_IDS:
-        send_system_message(f"> @{sender}: {text}\nOnly admins can use !mute")
-        return '', 200
+        if text_lower.startswith('!mute'):
+            if str(user_id) not in ADMIN_IDS:
+                send_system_message(f"> @{sender}: {text}\nOnly admins can use !mute")
+                return '', 200
 
-    # 1. If the command is a reply → mute the author of the original message
-    replied = _find_replied_message(data)
-    if replied:
-        target_id = str(replied.get("user_id"))
-        target_nick = replied.get("name", "Unknown")
-        # optional minutes from the command text (e.g. "!mute 60")
-        minutes = 30
-        try:
-            if len(text.split()) > 1:
-                minutes = int(text.split()[1])
-        except ValueError:
-            minutes = 30
-    else:
-        # 2. Normal syntax: !mute @User [minutes]
-        parts = text.split()
-        if len(parts) < 2:
-            send_system_message("> Usage: `!mute` (reply) **or** `!mute @User [minutes]`")
+            replied = _find_replied_message(data)
+            if replied:
+                target_id = str(replied.get("user_id"))
+                target_nick = replied.get("name", "Unknown")
+                # Optional minutes from command: "!mute 60"
+                minutes = 30
+                try:
+                    if len(text.split()) > 1:
+                        minutes = int(text.split()[1])
+                except ValueError:
+                    minutes = 30
+            else:
+                # Normal: !mute @User [minutes]
+                parts = text.split()
+                if len(parts) < 2:
+                    send_system_message("> Usage: `!mute` (as reply) **or** `!mute @User [minutes]`")
+                    return '', 200
+                target_name = parts[1].lstrip('@')
+                minutes = int(parts[2]) if len(parts) > 2 else 30
+                target = fuzzy_find_member(target_name)
+                if not target:
+                    send_system_message(f"> @{sender}: User **{target_name}** not found")
+                    return '', 200
+                target_id, target_nick = target
+
+            # Apply mute
+            muted_until = time.time() + minutes * 60
+            muted_users[target_id] = muted_until
+            send_system_message(
+                f"{target_nick} (`{target_id}`) has been **muted** for **{minutes}** minute(s)."
+            )
+            logger.info(f"Muted {target_nick} ({target_id}) for {minutes}m")
             return '', 200
-        target_name = parts[1].lstrip('@')
-        minutes = int(parts[2]) if len(parts) > 2 else 30
-        target = fuzzy_find_member(target_name)
-        if not target:
-            send_system_message(f"> @{sender}: User **{target_name}** not found")
-            return '', 200
-        target_id, target_nick = target
-
-    # ---- apply mute -------------------------------------------------
-    muted_until = time.time() + minutes * 60
-    muted_users[target_id] = muted_until
-    send_system_message(
-        f"{target_nick} (`{target_id}`) has been **muted** for **{minutes}** minute(s)."
-    )
-    logger.info(f"Muted {target_nick} ({target_id}) for {minutes}m")
-    return '', 200
-
+            
         if text_lower.startswith('!unmute '):
             if str(user_id) not in ADMIN_IDS:
                 send_system_message(f"> @{sender}: Only admins can use !unmute")
@@ -1101,35 +1096,19 @@ if text_lower.startswith('!mute'):
             unban_user(target_name, sender, user_id, text)
             return '', 200
 
-# -------------------------------------------------
-# REPLACE THE ENTIRE `if text_lower.startswith('!delete '):` BLOCK
-# -------------------------------------------------
-if text_lower.startswith('!delete'):
-    if str(user_id) not in ADMIN_IDS:
-        send_system_message(f"> @{sender}: {text}\nOnly admins can use !delete")
-        return '', 200
-
-    # 1. Try to delete a *replied-to* message
-    replied = _find_replied_message(data)
-    if replied and replied.get("id"):
-        if _delete_message_by_id(replied["id"]):
-            send_system_message(f"Message {replied['id']} (replied-to) deleted by @{sender}.")
-        else:
-            send_system_message(f"Failed to delete replied-to message {replied['id']}.")
-        return '', 200
-
-    # 2. Fallback: explicit ID after the command
-    parts = text.split()
-    if len(parts) < 2:
-        send_system_message("> Usage: `!delete` (reply) **or** `!delete <MESSAGE_ID>`")
-        return '', 200
-
-    msg_id = parts[1]
-    if _delete_message_by_id(msg_id):
-        send_system_message(f"Message {msg_id} deleted by @{sender}.")
-    else:
-        send_system_message(f"Failed to delete message {msg_id}.")
-    return '', 200
+        if text_lower.startswith('!delete '):
+            if str(user_id) not in ADMIN_IDS:
+                send_system_message(f"> @{sender}: Only admins can use !delete")
+                return '', 200
+            try:
+                msg_id = text.split()[1]
+                if delete_message(msg_id):
+                    send_system_message(f"Message {msg_id} deleted by @{sender}.")
+                else:
+                    send_system_message(f"Failed to delete message {msg_id}.")
+            except:
+                send_system_message("Usage: `!delete MESSAGE_ID`")
+            return '', 200
     
         if text_lower.startswith('!getid '):
             target_name = text[len('!getid '):].strip().lstrip('@')
