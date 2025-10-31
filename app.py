@@ -73,7 +73,7 @@ user_swear_counts: Dict[str, int] = {}
 banned_users: Dict[str, str] = {}
 former_members: Dict[str, str] = {}
 user_strikes: Dict[str, int] = {}
-muted_users: Dict[str, int] = {}
+muted_users: Dict[str, float] = {}  # Changed to float for time.time()
 daily_message_counts: Dict[str, int] = {}
 last_message_by_user: Dict[str, str] = {}
 daily_counts_date: Optional[str] = None
@@ -660,12 +660,9 @@ def check_for_violations(text: str, user_id: str, username: str, message_id: str
     deleted = False
 
     # === MUTE CHECK: Auto-delete if user is muted ===
-    # === MUTE ENFORCEMENT ===
     if uid in muted_users and now < muted_users[uid]:
         minutes_left = int((muted_users[uid] - now) / 60) + 1
-        # Delete the message using the correct API
         _delete_message_by_id(message_id)
-        # Warn once per mute (not on every message)
         if not hasattr(check_for_violations, "_mute_warned"):
             check_for_violations._mute_warned = {}
         if uid not in check_for_violations._mute_warned:
@@ -691,7 +688,7 @@ def check_for_violations(text: str, user_id: str, username: str, message_id: str
         clean_word = word.strip('.,!?"\'()[]{}').lower()
         if clean_word in INSTANT_BAN_WORDS:
             logger.info(f"INSTANT BAN: '{clean_word}' from {username} (msg {message_id})")
-            delete_message(message_id)
+            _delete_message_by_id(message_id)
             success = call_ban_service(uid, username, f"Instant ban: {clean_word}")
             if success:
                 send_system_message(f"{username} has been permanently banned for using prohibited language. (Message deleted)")
@@ -709,7 +706,7 @@ def check_for_violations(text: str, user_id: str, username: str, message_id: str
             current_count = user_swear_counts[uid]
             logger.info(f"{username} swear count: {current_count}/10 (msg {message_id})")
             
-            delete_message(message_id)
+            _delete_message_by_id(message_id)
             
             if current_count >= 10:
                 success = call_ban_service(uid, username, f"10 strikes - swear words")
@@ -1012,7 +1009,7 @@ def webhook():
         sender = data.get('name', 'Someone')
         user_id = str(data.get('user_id')) if data.get('user_id') is not None else None
         message_id = data.get('id')
-        text_lower = text.lower()
+        text_lower = text.lower().lstrip()  # ← FIXED: .lstrip()
         attachments = data.get("attachments", [])
         is_dm = 'group_id' not in data or not data['group_id']
 
@@ -1027,10 +1024,6 @@ def webhook():
                     # 1 in 10 chance to say "GAY"
                     if random.randint(1, 10) == 1:
                         send_system_message("GAY")
-#                elif 'has joined the group' in text_lower:
-#                    send_system_message("Welcome to Clean Memes, check the rules and announcement topics before chatting!")
-#                elif 'has rejoined the group' in text_lower:
-#                    send_system_message("oh look who's back")
             return '', 200
         if sender_type not in ['user']:
             return '', 200
@@ -1045,6 +1038,7 @@ def webhook():
         if user_id and text:
             increment_user_message_count(user_id, sender, text)
 
+        # === !mute ===
         if text_lower.startswith('!mute'):
             if str(user_id) not in ADMIN_IDS:
                 send_system_message(f"> @{sender}: {text}\nOnly admins can use !mute")
@@ -1054,7 +1048,6 @@ def webhook():
             if replied:
                 target_id = str(replied.get("user_id"))
                 target_nick = replied.get("name", "Unknown")
-                # Extract LAST number from entire command text
                 minutes = extract_last_number(text, 30)
             else:
                 parts = text.split()
@@ -1062,7 +1055,6 @@ def webhook():
                     send_system_message("> Usage: `!mute` (reply) **or** `!mute @User [minutes]`")
                     return '', 200
                 target_name = parts[1].lstrip('@')
-                # Extract LAST number from entire text (after splitting)
                 minutes = extract_last_number(text, 30)
                 target = fuzzy_find_member(target_name)
                 if not target:
@@ -1070,7 +1062,6 @@ def webhook():
                     return '', 200
                 target_id, target_nick = target
 
-            # Apply mute
             muted_until = time.time() + minutes * 60
             muted_users[target_id] = muted_until
             send_system_message(
@@ -1078,7 +1069,33 @@ def webhook():
             )
             logger.info(f"Muted {target_nick} ({target_id}) for {minutes}m")
             return '', 200
-            
+
+        # === !delete ===
+        if text_lower.startswith('!delete'):
+            if str(user_id) not in ADMIN_IDS:
+                send_system_message(f"> @{sender}: {text}\nOnly admins can use !delete")
+                return '', 200
+
+            replied = _find_replied_message(data)
+            if replied and replied.get("id"):
+                if _delete_message_by_id(replied["id"]):
+                    send_system_message(f"Message {replied['id']} (replied-to) deleted by @{sender}.")
+                else:
+                    send_system_message(f"Failed to delete replied-to message {replied['id']}.")
+                return '', 200
+
+            parts = text.split()
+            if len(parts) < 2 or not parts[1].isdigit():
+                send_system_message("> Usage: `!delete` (reply) **or** `!delete <MESSAGE_ID>`")
+                return '', 200
+
+            if _delete_message_by_id(parts[1]):
+                send_system_message(f"Message {parts[1]} deleted by @{sender}.")
+            else:
+                send_system_message(f"Failed to delete message {parts[1]}.")
+            return '', 200
+
+        # === Other Admin Commands ===
         if text_lower.startswith('!unmute '):
             if str(user_id) not in ADMIN_IDS:
                 send_system_message(f"> @{sender}: Only admins can use !unmute")
@@ -1112,33 +1129,6 @@ def webhook():
             unban_user(target_name, sender, user_id, text)
             return '', 200
 
-        if text_lower.startswith('!delete'):
-            if str(user_id) not in ADMIN_IDS:
-                send_system_message(f"> @{sender}: {text}\nOnly admins can use !delete")
-                return '', 200
-
-            # 1. Delete replied-to message
-            replied = _find_replied_message(data)
-            if replied and replied.get("id"):
-                if _delete_message_by_id(replied["id"]):
-                    send_system_message(f"Message {replied['id']} (replied-to) deleted by @{sender}.")
-                else:
-                    send_system_message(f"Failed to delete replied-to message {replied['id']}.")
-                return '', 200
-
-            # 2. Fallback: explicit ID
-            parts = text.split()
-            if len(parts) < 2:
-                send_system_message("> Usage: `!delete` (reply) **or** `!delete <MESSAGE_ID>`")
-                return '', 200
-
-            msg_id = parts[1]
-            if _delete_message_by_id(msg_id):
-                send_system_message(f"Message {msg_id} deleted by @{sender}.")
-            else:
-                send_system_message(f"Failed to delete message {msg_id}.")
-            return '', 200
-    
         if text_lower.startswith('!getid '):
             target_name = text[len('!getid '):].strip().lstrip('@')
             get_user_id(target_name, sender, user_id, text)
@@ -1172,6 +1162,7 @@ def webhook():
             send_system_message("System messages **DISABLED** by admin.")
             return '', 200
 
+        # === Fun Responses ===
         if 'clean memes' in text_lower:
             send_message("We're the best!")
         elif 'wsg' in text_lower:
@@ -1189,7 +1180,6 @@ def webhook():
         elif 'french' in text_lower:
             send_message("please censor that to fr*nch")
 
-
         if text_lower.strip() == '!leaderboard':
             msg = _build_leaderboard_message()
             send_message(msg)
@@ -1200,7 +1190,6 @@ def webhook():
     except Exception as e:
         logger.error(f"Webhook error: {e}")
         return '', 500
-        
 
 # -----------------------
 # Global Pending Actions (for DM trade replies)
