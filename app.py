@@ -1042,10 +1042,16 @@ def webhook():
             return '', 200
 
         # === VIOLATION CHECK (Swear Filter, Mute, Ban) ===
+        # === VIOLATION CHECK (Swear Filter, Mute, Ban) ===
         if user_id and text and message_id:
-            deleted = check_for_violations(text, user_id, sender, str(message_id))
-            if deleted:
-                return '', 200
+            # Allow admins to run unmute even if muted
+            if text_lower.startswith('!unmute') and str(user_id) in ADMIN_IDS:
+                pass
+            else:
+                deleted = check_for_violations(text, user_id, sender, str(message_id))
+                if deleted:
+                    return '', 200
+
 
         # === DAILY MESSAGE COUNT ===
         if user_id and text:
