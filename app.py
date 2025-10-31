@@ -1108,161 +1108,160 @@ def webhook():
             save_system_messages_enabled(False)
             send_system_message("System messages **DISABLED** by admin.")
             return '', 200
+            
 
-        # === MEME NFT COMMANDS ===
-        if text_lower.strip() == '!memeupload' and attachments:
-            image_att = next((att for att in attachments if att.get("type") == "image"), None)
-            if not image_att:
-                send_message(f"@{sender} Upload an image with `!memeupload`!")
-                return '', 200
-            if user_id in game_data["has_minted"]:
-                send_message(f"@{sender} One mint per player! You already uploaded.")
-                return '', 200
+        # === MEME NFT COMMANDS === """
+    #    if text_lower.strip() == '!memeupload' and attachments:
+     #      if not image_att:
+      #          send_message(f"@{sender} Upload an image with `!memeupload`!")
+       #         return '', 200
+        #    if user_id in game_data["has_minted"]:
+         #       send_message(f"@{sender} One mint per player! You already uploaded.")
+          #      return '', 200
+#
+ #           img_url = image_att.get("url")
+  #          nft_id = str(next_nft_id)
+#
+ #           game_data["nfts"][nft_id] = {
+  #              "owner": user_id,
+   #           "rarity": 1,
+    #            "price": 50,
+     #           "listed": False,
+      #          "name": f"{sender}'s Meme"
+       #     }
+  #          game_data["balances"][user_id] = game_data["balances"].get(user_id, 500)
+   #         game_data["has_minted"].add(user_id)
+    #        game_data["pending_rarity"][nft_id] = {
+     #           "message_id": message_id,
+      #          "mint_time": time.time()
+ #           }
+  #          save_game_data(game_data)
+   #         next_nft_id += 1
+#
+ #           send_message(
+  #              f"**{sender} MINTED MemeNFT #{nft_id}!**\n"
+   #             f"**Initial Rarity:** 1/10 | **Price:** 50 Coins\n"
+    #            f"*Final rarity set in 24h based on likes!*\n"
+     #           f"[View Meme]({img_url})"
+      #      )
+       #     return '', 200
 
-            img_url = image_att.get("url")
-            nft_id = str(next_nft_id)
+#        if text_lower.strip() == '!mymeme':
+#            owned = [nft for nft_id, nft in game_data["nfts"].items() if nft["owner"] == user_id]
+#            if not owned:
+#                send_message(f"@{sender} No meme yet! Use `!memeupload` with an image.")
+#                return '', 200
+ #           nft = owned[0]
+  #          nft_id = next(k for k, v in game_data["nfts"].items() if v == nft)
+#            status = "Listed" if nft["listed"] else "In Wallet"
+ #           send_message(
+   #             f"**Your MemeNFT #{nft_id}**\n"
+   #            f"**{nft['name']}** | Rarity: **{nft['rarity']}/10** | Price: **{nft['price']} Coins**\n"
+  #              f"Status: {status}\n"
+    #            f"[View]({nft['url']})"
+ #           )
+ #           return '', 200
 
-            game_data["nfts"][nft_id] = {
-                "owner": user_id,
-                "url": img_url,
-                "rarity": 1,
-                "price": 50,
-                "listed": False,
-                "name": f"{sender}'s Meme"
-            }
-            game_data["balances"][user_id] = game_data["balances"].get(user_id, 500)
-            game_data["has_minted"].add(user_id)
-            game_data["pending_rarity"][nft_id] = {
-                "message_id": message_id,
-                "mint_time": time.time()
-            }
-            save_game_data(game_data)
-            next_nft_id += 1
+#        if text_lower.startswith('!buy '):
+ #           try:
+#                nft_id = text[len('!buy '):].strip()
+ #               if nft_id not in game_data["nfts"]:
+ #                   send_message("NFT not found!")
+ #                   return '', 200
+ #               nft = game_data["nfts"][nft_id]
+#                if not nft["listed"]:
+ #                 send_message("This NFT is not for sale!")
+     #               return '', 200
+ #               if nft["owner"] == user_id:
+       #             send_message("You already own this!")
+       #             return '', 200
+     #           cost = nft["price"]
+    #            balance = game_data["balances"].get(user_id, 0)
+  #              if cost > balance:
+  #                  send_message("Not enough MemeCoins!")
+    #                return '', 200
 
-            send_message(
-                f"**{sender} MINTED MemeNFT #{nft_id}!**\n"
-                f"**Initial Rarity:** 1/10 | **Price:** 50 Coins\n"
-                f"*Final rarity set in 24h based on likes!*\n"
-                f"[View Meme]({img_url})"
-            )
-            return '', 200
-
-        if text_lower.strip() == '!mymeme':
-            owned = [nft for nft_id, nft in game_data["nfts"].items() if nft["owner"] == user_id]
-            if not owned:
-                send_message(f"@{sender} No meme yet! Use `!memeupload` with an image.")
-                return '', 200
-            nft = owned[0]
-            nft_id = next(k for k, v in game_data["nfts"].items() if v == nft)
-            status = "Listed" if nft["listed"] else "In Wallet"
-            send_message(
-                f"**Your MemeNFT #{nft_id}**\n"
-                f"**{nft['name']}** | Rarity: **{nft['rarity']}/10** | Price: **{nft['price']} Coins**\n"
-                f"Status: {status}\n"
-                f"[View]({nft['url']})"
-            )
-            return '', 200
-
-        if text_lower.startswith('!buy '):
-            try:
-                nft_id = text[len('!buy '):].strip()
-                if nft_id not in game_data["nfts"]:
-                    send_message("NFT not found!")
-                    return '', 200
-                nft = game_data["nfts"][nft_id]
-                if not nft["listed"]:
-                    send_message("This NFT is not for sale!")
-                    return '', 200
-                if nft["owner"] == user_id:
-                    send_message("You already own this!")
-                    return '', 200
-                cost = nft["price"]
-                balance = game_data["balances"].get(user_id, 0)
-                if cost > balance:
-                    send_message("Not enough MemeCoins!")
-                    return '', 200
-
-                old_owner = nft["owner"]
-                nft["owner"] = user_id
-                nft["listed"] = False
-                game_data["balances"][user_id] -= cost
-                game_data["balances"][old_owner] = game_data["balances"].get(old_owner, 0) + cost
-                save_game_data(game_data)
-
-                send_message(
-                    f"**SOLD!** <@{user_id}> bought MemeNFT #{nft_id} for **{cost} Coins** from <@{old_owner}>!\n"
-                    f"[View]({nft['url']})"
-                )
-                return '', 200
-            except:
-                send_message("Usage: `!buy ID`")
-                return '', 200
-
-        if text_lower.startswith('!list '):
-            try:
-                parts = text[len('!list '):].strip().split()
-                nft_id = parts[0]
-                price = int(parts[1])
-                if nft_id not in game_data["nfts"]:
-                    send_message("NFT not found!")
-                    return '', 200
-                nft = game_data["nfts"][nft_id]
-                if nft["owner"] != user_id:
-                    send_message("You don't own this NFT!")
-                    return '', 200
-                if price < 10:
-                    send_message("Minimum price: 10 Coins")
-                    return '', 200
-                nft["listed"] = True
-                nft["price"] = price
-                save_game_data(game_data)
-                send_message(f"MemeNFT #{nft_id} listed for **{price} Coins**!")
-                return '', 200
-            except:
-                send_message("Usage: `!list ID Price`")
-                return '', 200
-
-        if text_lower.startswith('!trade '):
-            try:
-                parts = text[len('!trade '):].strip().split()
-                target_name = parts[0].lstrip('@')
-                nft_id = parts[1]
-                target = fuzzy_find_member(target_name)
-                if not target:
-                    send_message("User not found!")
-                    return '', 200
-                target_id, _ = target
-                if nft_id not in game_data["nfts"]:
-                    send_message("NFT not found!")
-                    return '', 200
-                nft = game_data["nfts"][nft_id]
-                if nft["owner"] != user_id:
-                    send_message("You don't own this NFT!")
-                    return '', 200
-
-                pending_actions[user_id] = {"action": "trade_offer", "target": target_id, "nft_id": nft_id}
-                pending_actions[target_id] = {"action": "trade_accept", "sender": user_id, "nft_id": nft_id}
-
-                send_dm(user_id, f"Trade offer sent for MemeNFT #{nft_id} to @{target_name}. Waiting for YES...")
-                send_dm(target_id, f"<@{user_id}> wants to trade you MemeNFT #{nft_id}. Reply **YES** in DM to accept.")
-                return '', 200
-            except:
-                send_message("Usage: `!trade @User ID`")
-                return '', 200
-
-        if text_lower.strip() == '!market':
-            listed = []
-            for nid, nft in game_data["nfts"].items():
-                if nft["listed"]:
-                    listed.append(f"#{nid} — **{nft['price']} Coins** (Rarity {nft['rarity']}) by <@{nft['owner']}>")
-            if not listed:
-                send_message("**Meme Market**\nNothing for sale yet!")
-            else:
-                msg = "**Meme Market**\n" + "\n".join(listed[:10])
-                if len(listed) > 10:
-                    msg += f"\n...and {len(listed)-10} more!"
-                send_message(msg)
-            return '', 200
+   #             old_owner = nft["owner"]
+    #            nft["owner"] = user_id
+  #              nft["listed"] = False
+  #              game_data["balances"][user_id] -= cost
+   #             game_data["balances"][old_owner] = game_data["balances"].get(old_owner, 0) + cost
+    #            save_game_data(game_data)
+#
+ #               send_message(
+  #                  f"**SOLD!** <@{user_id}> bought MemeNFT #{nft_id} for **{cost} Coins** from <@{old_owner}>!\n"
+   #                 f"[View]({nft['url']})"
+    #            )
+     #           return '', 200
+      #      except:
+       #         send_message("Usage: `!buy ID`")
+        #        return '', 200
+#
+ #       if text_lower.startswith('!list '):
+  #          try:
+   #             parts = text[len('!list '):].strip().split()
+    #            nft_id = parts[0]
+     #           price = int(parts[1])
+      #          if nft_id not in game_data["nfts"]:
+       #             send_message("NFT not found!")
+          #          return '', 200
+           #     nft = game_data["nfts"][nft_id]
+            #    if nft["owner"] != user_id:
+             #       send_message("You don't own this NFT!")
+              #      return '', 200
+  #              if price < 10:
+   #                 send_message("Minimum price: 10 Coins")
+    #                return '', 200
+     #           nft["listed"] = True
+      #          nft["price"] = price
+       #         save_game_data(game_data)
+        #        send_message(f"MemeNFT #{nft_id} listed for **{price} Coins**!")
+         #       return '', 200
+   #         except:
+    #            send_message("Usage: `!list ID Price`")
+     #           return '', 200
+#
+ #       if text_lower.startswith('!trade '):
+  #          try:
+   #             parts = text[len('!trade '):].strip().split()
+    #            target_name = parts[0].lstrip('@')
+     #           nft_id = parts[1]
+      #          target = fuzzy_find_member(target_name)
+       #         if not target:
+        #            send_message("User not found!")
+         #           return '', 200
+          #      target_id, _ = target
+           #     if nft_id not in game_data["nfts"]:
+            #        send_message("NFT not found!")
+   #                 return '', 200
+    #            nft = game_data["nfts"][nft_id]
+     #           if nft["owner"] != user_id:
+      #              send_message("You don't own this NFT!")
+       #             return '', 200
+#
+ #               pending_actions[user_id] = {"action": "trade_offer", "target": target_id, "nft_id": nft_id}
+  #              pending_actions[target_id] = {"action": "trade_accept", "sender": user_id, "nft_id": nft_id}
+#
+ #               send_dm(user_id, f"Trade offer sent for MemeNFT #{nft_id} to @{target_name}. Waiting for YES...")
+  #              send_dm(target_id, f"<@{user_id}> wants to trade you MemeNFT #{nft_id}. Reply **YES** in DM to accept.")
+   #             return '', 200
+    #        except:
+     #           send_message("Usage: `!trade @User ID`")
+      #          return '', 200
+#
+ #       if text_lower.strip() == '!market':
+  #          listed = []
+   #         for nid, nft in game_data["nfts"].items():
+    #            if nft["listed"]:
+     #               listed.append(f"#{nid} — **{nft['price']} Coins** (Rarity {nft['rarity']}) by <@{nft['owner']}>")
+#            if not listed:
+ #               send_message("**Meme Market**\nNothing for sale yet!")
+  #          else:
+   #             msg = "**Meme Market**\n" + "\n".join(listed[:10])
+    #            if len(listed) > 10:
+     #               msg += f"\n...and {len(listed)-10} more!"
+      #          send_message(msg)
+       #     return '', 200
 
                 # -------------------------------------------------
         # SHOW COLLECTION IN GROUP (NOT DM)
@@ -1270,99 +1269,99 @@ def webhook():
         # -------------------------------------------------
         # !collection – show in GROUP (chunked for length)
         # -------------------------------------------------
-        if text_lower.strip() == '!collection':
-            owned = [(nid, nft) for nid, nft in game_data["nfts"].items()
-                     if nft["owner"] == user_id]
-            if not owned:
-                send_message(f"@{sender} You don't own any MemeNFTs yet! Use `!memeupload`")
-                return '', 200
-
-            # Header
-            header = f"**{sender}'s Meme Collection** ({len(owned)} NFT{'s' if len(owned)>1 else ''})"
-            lines = [header]
-
-            for nid, nft in owned:
-                status = ("In Wallet" if not nft.get("listed")
-                          else f"Listed @ {nft['price']} Coins")
-                lines.append(
-                    f"• **#{nid}** | {nft.get('name','Untitled')} | Rarity: **{nft['rarity']}/10** | {status}"
-                )
-
+#        if text_lower.strip() == '!collection':
+ #           owned = [(nid, nft) for nid, nft in game_data["nfts"].items()
+  #                   if nft["owner"] == user_id]
+   #         if not owned:
+    #            send_message(f"@{sender} You don't own any MemeNFTs yet! Use `!memeupload`")
+     #           return '', 200
+#
+ #           # Header
+  #          header = f"**{sender}'s Meme Collection** ({len(owned)} NFT{'s' if len(owned)>1 else ''})"
+   #         lines = [header]
+#
+ #           for nid, nft in owned:
+  #              status = ("In Wallet" if not nft.get("listed")
+   #                       else f"Listed @ {nft['price']} Coins")
+    #            lines.append(
+     #               f"• **#{nid}** | {nft.get('name','Untitled')} | Rarity: **{nft['rarity']}/10** | {status}"
+      #          )
+#
             # Optional total value
-            total = sum(nft["rarity"]*50 for _, nft in owned if not nft.get("listed"))
-            total += game_data["balances"].get(user_id, 0)
-            lines.append(f"**Total Portfolio Value: {total} Coins**")
-
-            # ---- Chunk into ≤ 900-char messages ----
-            msgs = []
-            cur = ""
-            for ln in lines:
-                if len(cur) + len(ln) + 1 > 900:          # +1 for \n
-                    msgs.append(cur.strip())
-                    cur = ln + "\n"
-                else:
-                    cur += ln + "\n"
-            if cur:
-                msgs.append(cur.strip())
-
-            # ---- Send each chunk ----
-            for i, m in enumerate(msgs):
-                if i > 0:
-                    time.sleep(1)                     # respect rate-limit
-                if not send_message(m):
-                    logger.error(f"Collection chunk {i+1} failed")
-                    break
-            return '', 200
-
-        if text_lower.strip() == '!mememoney':
-            # Build name lookup: user_id → nickname
-            members = get_group_members()
-            name_map = {str(m["user_id"]): m["nickname"] for m in members if m.get("user_id")}
-            name_map.update(former_members)  # include left/banned users
-
-            portfolio = {}
-            for uid in {nft["owner"] for nft in game_data["nfts"].values()}:
-                value = game_data["balances"].get(uid, 0)
-                portfolio[uid] = value
-
-            if not portfolio:
-                send_message("No portfolios yet!")
-                return '', 200
-
-            top = sorted(portfolio.items(), key=lambda x: -x[1])[:5]
-            lines = [f"{i+1}. {name_map.get(uid, f'User {uid}')} — **{val} Total Value**" 
-                     for i, (uid, val) in enumerate(top)]
-            send_message("**Top Meme Collectors**\n" + "\n".join(lines))
-            return '', 200
-
-        if text_lower.strip() == '!unemployed':
-            msg = _build_leaderboard_message()
-            send_message(msg)
-            return '', 200
-
-        if text_lower.strip() == '!balance':
-            balance = game_data["balances"].get(user_id, 0)
-            send_message(f"Your MemeCoin balance: **{balance} Coins**")
-            return '', 200
-
-        if text_lower.strip() == '!resetmeme' and str(user_id) in ADMIN_IDS:
-            game_data = {
-                "nfts": {},
-                "balances": {},
-                "has_minted": set(),
-                "pending_rarity": {}
-            }
-            next_nft_id = 1
-            save_game_data(game_data)
-            send_message("Meme NFT game reset by admin!")
-            return '', 200
-
-        return '', 200
-
-    except Exception as e:
-        logger.error(f"Webhook error: {e}")
-        return '', 500
-
+ #           total = sum(nft["rarity"]*50 for _, nft in owned if not nft.get("listed"))
+  #          total += game_data["balances"].get(user_id, 0)
+   #         lines.append(f"**Total Portfolio Value: {total} Coins**")
+#
+ #           # ---- Chunk into ≤ 900-char messages ----
+  #          msgs = []
+   #         cur = ""
+    #        for ln in lines:
+     #           if len(cur) + len(ln) + 1 > 900:          # +1 for \n
+      #              msgs.append(cur.strip())
+       #             cur = ln + "\n"
+        #        else:
+         #           cur += ln + "\n"
+          #  if cur:
+           #     msgs.append(cur.strip())
+#
+ #           # ---- Send each chunk ----
+  #          for i, m in enumerate(msgs):
+   #             if i > 0:
+    #                time.sleep(1)                     # respect rate-limit
+     #           if not send_message(m):
+      #              logger.error(f"Collection chunk {i+1} failed")
+       #             break
+        #    return '', 200
+#
+ #       if text_lower.strip() == '!mememoney':
+  #          # Build name lookup: user_id → nickname
+   #         members = get_group_members()
+    #        name_map = {str(m["user_id"]): m["nickname"] for m in members if m.get("user_id")}
+     #       name_map.update(former_members)  # include left/banned users
+#
+ #           portfolio = {}
+  #          for uid in {nft["owner"] for nft in game_data["nfts"].values()}:
+   #             value = game_data["balances"].get(uid, 0)
+    #            portfolio[uid] = value
+#
+ #           if not portfolio:
+  #              send_message("No portfolios yet!")
+   ##             return '', 200
+#
+ #           top = sorted(portfolio.items(), key=lambda x: -x[1])[:5]
+  #          lines = [f"{i+1}. {name_map.get(uid, f'User {uid}')} — **{val} Total Value**" 
+   #                  for i, (uid, val) in enumerate(top)]
+    #        send_message("**Top Meme Collectors**\n" + "\n".join(lines))
+     #       return '', 200
+#
+ #       if text_lower.strip() == '!unemployed':
+  #          msg = _build_leaderboard_message()
+   #         send_message(msg)
+    #        return '', 200
+#
+ #       if text_lower.strip() == '!balance':
+  #          balance = game_data["balances"].get(user_id, 0)
+   #         send_message(f"Your MemeCoin balance: **{balance} Coins**")
+    #        return '', 200
+#
+ #       if text_lower.strip() == '!resetmeme' and str(user_id) in ADMIN_IDS:
+  #          game_data = {
+   #             "nfts": {},
+    #            "balances": {},
+     #           "has_minted": set(),
+      #          "pending_rarity": {}
+       #     }
+        #    next_nft_id = 1
+         #   save_game_data(game_data)
+          #  send_message("Meme NFT game reset by admin!")
+           # return '', 200
+#
+ #       return '', 200
+#
+ #   except Exception as e:
+  #      logger.error(f"Webhook error: {e}")
+   #     return '', 500
+    #    """
 
 # -----------------------
 # Global Pending Actions (for DM trade replies)
