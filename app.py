@@ -16,7 +16,7 @@ app = Flask(__name__)
 
 # --- MERGED CONFIG ---
 ACCESS_TOKEN = os.getenv("ACCESS_TOKEN")  # Shared: GroupMe API token
-GROUP_ID = os.getenv("GROUP_ID")  # Shared: Main Group ID
+GROUP_ID = os.getenv("GROUP_ID")  # Shared: Group ID
 BOT_ID = os.getenv("BOT_ID")
 BOT_NAME = os.getenv("BOT_NAME", "ClankerBot")
 PORT = int(os.getenv("PORT", 5000))
@@ -30,11 +30,6 @@ ADMIN_IDS = [
 ]
 JSONBIN_MASTER_KEY = os.getenv("JSONBIN_MASTER_KEY")
 JSONBIN_BIN_ID = os.getenv("JSONBIN_BIN_ID")
-
-# Subtopic Config
-SUBTOPIC_NAME = os.getenv("SUBTOPIC_NAME", "Meme NFT Market")
-SUBTOPIC_DESC = os.getenv("SUBTOPIC_DESC", "Trade, mint, and flex your MemeNFTs here!")
-SUBTOPIC_ID_FILE = "subtopic_id.txt"
 
 # Swear word categories
 INSTANT_BAN_WORDS = [
@@ -89,9 +84,6 @@ system_messages_enabled = True
 last_sent_time = 0.0
 last_system_message_time = 0.0
 cooldown_seconds = 10
-
-# Subtopic ID (loaded or created)
-SUBTOPIC_ID: Optional[str] = None
 
 # -----------------------
 # JSON Helpers
@@ -159,87 +151,11 @@ def _initialize_daily_tracking():
 _initialize_daily_tracking()
 
 # -----------------------
-# Subtopic Management
-# -----------------------
-def load_subtopic_id() -> Optional[str]:
-    if os.path.exists(SUBTOPIC_ID_FILE):
-        with open(SUBTOPIC_ID_FILE, "r") as f:
-            return f.read().strip()
-    return None
-
-def save_subtopic_id(sub_id: str) -> None:
-    with open(SUBTOPIC_ID_FILE, "w") as f:
-        f.write(str(sub_id))
-
-def get_subtopics() -> List[Dict]:
-    try:
-        url = f"{GROUPME_API}/groups/{GROUP_ID}/subgroups?token={ACCESS_TOKEN}"
-        resp = requests.get(url, timeout=8)
-        if resp.status_code == 200:
-            return resp.json().get("response", [])
-        else:
-            logger.warning(f"Subgroups fetch failed: {resp.status_code}")
-            return []
-    except Exception as e:
-        logger.error(f"Error fetching subgroups: {e}")
-        return []
-
-def create_subtopic() -> Optional[str]:
-    global SUBTOPIC_ID
-    payload = {
-        "name": SUBTOPIC_NAME,
-        "description": SUBTOPIC_DESC,
-        "shareable": True
-    }
-    try:
-        url = f"{GROUPME_API}/groups/{GROUP_ID}/subgroups?token={ACCESS_TOKEN}"
-        resp = requests.post(url, json=payload, timeout=10)
-        if resp.status_code == 201:
-            sub_id = resp.json().get("response", {}).get("id")
-            if sub_id:
-                save_subtopic_id(sub_id)
-                SUBTOPIC_ID = str(sub_id)
-                logger.info(f"Created subtopic: {SUBTOPIC_NAME} (ID: {sub_id})")
-                send_message(f"**Meme NFT Market subtopic created!** Use `!memeupload` here to start minting.", SUBTOPIC_ID)
-                return str(sub_id)
-        logger.error(f"Subtopic creation failed: {resp.status_code} - {resp.text}")
-        return None
-    except Exception as e:
-        logger.error(f"Subtopic create error: {e}")
-        return None
-
-def ensure_subtopic() -> str:
-    global SUBTOPIC_ID
-    if SUBTOPIC_ID:
-        return SUBTOPIC_ID
-    loaded = load_subtopic_id()
-    if loaded:
-        SUBTOPIC_ID = loaded
-        logger.info(f"Loaded subtopic ID: {SUBTOPIC_ID}")
-        return SUBTOPIC_ID
-
-    subs = get_subtopics()
-    for sub in subs:
-        if sub.get("name") == SUBTOPIC_NAME:
-            sub_id = str(sub.get("id"))
-            save_subtopic_id(sub_id)
-            SUBTOPIC_ID = sub_id
-            logger.info(f"Found existing subtopic: {SUBTOPIC_NAME} (ID: {sub_id})")
-            return sub_id
-
-    logger.info("No subtopic found. Creating...")
-    return create_subtopic() or GROUP_ID  # fallback
-
-# Initialize subtopic on startup
-SUBTOPIC_ID = ensure_subtopic()
-
-# -----------------------
 # Ban Functions
 # -----------------------
-def get_user_membership_id(user_id, group_id=None):
-    gid = group_id or GROUP_ID
+def get_user_membership_id(user_id):
     try:
-        url = f"{GROUPME_API}/groups/{gid}?token={ACCESS_TOKEN}"
+        url = f"{GROUPME_API}/groups/{GROUP_ID}?token={ACCESS_TOKEN}"
         response = requests.get(url, timeout=8)
         if response.status_code == 401:
             logger.error("ACCESS TOKEN INVALID OR EXPIRED - Regenerate your token at https://dev.groupme.com/!")
@@ -251,75 +167,41 @@ def get_user_membership_id(user_id, group_id=None):
         members = group_data.get('response', {}).get('members', [])
         for member in members:
             if str(member.get('user_id')) == str(user_id):
-                return member.get('id')
+                membership_id = member.get('id')
+                logger.info(f"Found membership ID {membership_id} for user {user_id}")
+                return membership_id
+        logger.warning(f"User {user_id} not found in group members")
         return None
     except Exception as e:
         logger.exception(f"Error getting membership ID for {user_id}: {e}")
         return None
 
-def ban_command(target_alias: str, sender_name: str, sender_id: str, original_text: str, group_id: str) -> None:
-    if str(sender_id) not in ADMIN_IDS:
-        send_system_message(f"> @{sender_name}: {original_text}\nError: Only admins can use `!ban`.", group_id)
-        return
-
-    result = fuzzy_find_member(target_alias, group_id)
-    if not result:
-        send_system_message(f"> @{sender_name}: {original_text}\nUser not found: `{target_alias}`", group_id)
-        return
-
-    target_user_id, target_username = result
-    if call_ban_service(target_user_id, target_username, "Manual admin ban", group_id):
-        send_system_message(f"> @{sender_name}: {original_text}\n**{target_username}** has been **banned**.", group_id)
-        logger.info(f"Admin {sender_name} ({sender_id}) banned {target_username} ({target_user_id})")
-    else:
-        send_system_message(f"> @{sender_name}: {original_text}\nFailed to ban `{target_username}`.", group_id)
-
-def ban_user(user_id, username, reason, group_id=None):
-    gid = group_id or GROUP_ID
+def ban_user(user_id, username, reason):
     try:
-        membership_id = get_user_membership_id(user_id, gid)
+        membership_id = get_user_membership_id(user_id)
         if not membership_id:
-            logger.warning(f"Cannot ban {username} ({user_id}) — not in group {gid}")
+            logger.warning(f"Cannot ban {username} ({user_id}) — membership id not found")
             return False
-        url = f"{GROUPME_API}/groups/{gid}/members/{membership_id}/remove?token={ACCESS_TOKEN}"
+        url = f"{GROUPME_API}/groups/{GROUP_ID}/members/{membership_id}/remove?token={ACCESS_TOKEN}"
         response = requests.post(url, timeout=8)
         if response.status_code == 200:
-            logger.info(f"Banned {username} ({user_id}) from {gid} - {reason}")
+            logger.info(f"Successfully banned {username} ({user_id}) - {reason}")
             return True
         else:
             logger.error(f"Ban failed {response.status_code}: {response.text}")
             return False
     except Exception as e:
-        logger.exception(f"Ban error: {e}")
+        logger.exception(f"Ban error for {username} ({user_id}): {e}")
         return False
 
-def call_ban_service(user_id: str, username: str, reason: str, group_id=None) -> bool:
-    success = ban_user(user_id, username, reason, group_id)
+def call_ban_service(user_id: str, username: str, reason: str) -> bool:
+    success = ban_user(user_id, username, reason)
     if success:
         banned_users[str(user_id)] = username
         save_json(banned_users_file, banned_users)
         user_swear_counts.pop(str(user_id), None)
         save_json(user_swear_counts_file, user_swear_counts)
     return success
-
-# -----------------------
-# !delete - Admin delete any message
-# -----------------------
-def delete_command(message_id_str: str, sender_name: str, sender_id: str, original_text: str, group_id: str) -> None:
-    if str(sender_id) not in ADMIN_IDS:
-        send_system_message(f"> @{sender_name}: {original_text}\nError: Only admins can use `!delete`.", group_id)
-        return
-
-    if not message_id_str.isdigit():
-        send_system_message(f"> @{sender_name}: {original_text}\nUsage: `!delete <message_id>`", group_id)
-        return
-
-    message_id = message_id_str.strip()
-    if delete_message(message_id, group_id):
-        send_system_message(f"> @{sender_name}: {original_text}\nMessage `{message_id}` deleted.", group_id)
-        logger.info(f"Admin {sender_name} ({sender_id}) deleted message {message_id} in group {group_id}")
-    else:
-        send_system_message(f"> @{sender_name}: {original_text}\nFailed to delete message `{message_id}` (may not exist or already deleted).", group_id)
 
 # -------------------------------------------------
 # DAILY 100 COIN INFLATION — EVERY 24 HOURS
@@ -329,12 +211,14 @@ def daily_coin_inflation_worker():
     logger.info("Daily inflation thread started.")
     while True:
         try:
+            # Wait until next 12:00 AM UTC (or any time you prefer)
             now = datetime.utcnow()
             next_run = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
             sleep_seconds = (next_run - now).total_seconds()
             if sleep_seconds > 0:
                 time.sleep(sleep_seconds)
 
+            # === GIVE 100 COINS TO EVERYONE ===
             if "balances" not in game_data:
                 game_data["balances"] = {}
             
@@ -343,6 +227,7 @@ def daily_coin_inflation_worker():
                 game_data["balances"][uid] += 100
                 affected += 1
 
+            # Also give to anyone who has ever minted (even if balance was 0)
             for uid in game_data.get("has_minted", set()):
                 uid = str(uid)
                 game_data["balances"][uid] = game_data["balances"].get(uid, 0) + 100
@@ -351,11 +236,12 @@ def daily_coin_inflation_worker():
             save_game_data(game_data)
             logger.info(f"Daily inflation: +100 coins to {affected} players.")
             
-            send_message("**DAILY DROP** — Everyone gets **+100 MemeCoins**! Check `!balance`", GROUP_ID)
+            # Optional: Announce in group
+            send_message("**DAILY DROP** — Everyone gets **+100 MemeCoins**! Check `!balance`")
 
         except Exception as e:
             logger.error(f"Inflation worker error: {e}")
-            time.sleep(3600)
+            time.sleep(3600)  # Wait 1h on error
 
 # Start the thread
 inflation_thread = threading.Thread(target=daily_coin_inflation_worker, daemon=True)
@@ -364,16 +250,15 @@ inflation_thread.start()
 # -----------------------
 # Message Deletion (Community API)
 # -----------------------
-def delete_message(message_id: str, group_id: Optional[str] = None) -> bool:
-    gid = group_id or GROUP_ID
-    if not ACCESS_TOKEN or not gid:
-        logger.error("Missing ACCESS_TOKEN or group_id for message deletion")
+def delete_message(message_id: str) -> bool:
+    if not ACCESS_TOKEN or not GROUP_ID:
+        logger.error("Missing ACCESS_TOKEN or GROUP_ID for message deletion")
         return False
-    url = f"{GROUPME_API}/conversations/{gid}/messages/{message_id}?token={ACCESS_TOKEN}"
+    url = f"{GROUPME_API}/conversations/{GROUP_ID}/messages/{message_id}?token={ACCESS_TOKEN}"
     try:
         response = requests.delete(url, timeout=8)
         if response.status_code == 204:
-            logger.info(f"Deleted message {message_id} in {gid}")
+            logger.info(f"Deleted message {message_id}")
             return True
         else:
             logger.error(f"Delete failed for {message_id}: {response.status_code} - {response.text}")
@@ -385,14 +270,13 @@ def delete_message(message_id: str, group_id: Optional[str] = None) -> bool:
 # -----------------------
 # Group API Helpers
 # -----------------------
-def get_group_members(group_id: Optional[str] = None) -> List[Dict[str, Any]]:
-    gid = group_id or GROUP_ID
-    if not ACCESS_TOKEN or not gid:
-        logger.error("Missing ACCESS_TOKEN or group_id for group members")
+def get_group_members() -> List[Dict[str, Any]]:
+    if not ACCESS_TOKEN or not GROUP_ID:
+        logger.error("Missing ACCESS_TOKEN or GROUP_ID for group members")
         return []
     try:
         response = requests.get(
-            f"{API_URL}/groups/{gid}",
+            f"{API_URL}/groups/{GROUP_ID}",
             headers={"X-Access-Token": ACCESS_TOKEN},
             timeout=8
         )
@@ -402,13 +286,12 @@ def get_group_members(group_id: Optional[str] = None) -> List[Dict[str, Any]]:
         logger.error(f"Failed to get group members: {e}")
         return []
 
-def get_group_share_url(group_id: Optional[str] = None) -> Optional[str]:
-    gid = group_id or GROUP_ID
-    if not ACCESS_TOKEN or not gid:
+def get_group_share_url() -> Optional[str]:
+    if not ACCESS_TOKEN or not GROUP_ID:
         return None
     try:
         response = requests.get(
-            f"{API_URL}/groups/{gid}",
+            f"{API_URL}/groups/{GROUP_ID}",
             headers={"X-Access-Token": ACCESS_TOKEN},
             timeout=8
         )
@@ -453,7 +336,7 @@ def google_search(query: str) -> str:
 # -----------------------
 # Fuzzy Member Search
 # -----------------------
-def fuzzy_find_member(target_alias: str, group_id: Optional[str] = None) -> Optional[Tuple[str, str]]:
+def fuzzy_find_member(target_alias: str) -> Optional[Tuple[str, str]]:
     if not target_alias or len(target_alias.strip()) < 2:
         return None
     target_clean = target_alias.strip().lower()
@@ -465,7 +348,7 @@ def fuzzy_find_member(target_alias: str, group_id: Optional[str] = None) -> Opti
         return all(word in nick_words for word in target_words)
 
     if target_alias.isdigit():
-        members = get_group_members(group_id)
+        members = get_group_members()
         for m in members:
             if str(m.get("user_id")) == target_alias:
                 return (str(m.get("user_id")), m.get("nickname") or "Unknown")
@@ -474,7 +357,7 @@ def fuzzy_find_member(target_alias: str, group_id: Optional[str] = None) -> Opti
         if target_alias in banned_users:
             return (str(target_alias), banned_users[target_alias])
 
-    members = get_group_members(group_id)
+    members = get_group_members()
     nicknames = [m.get("nickname", "") for m in members if m.get("nickname")]
     for m in members:
         nick = m.get("nickname", "")
@@ -527,26 +410,32 @@ def fuzzy_find_member(target_alias: str, group_id: Optional[str] = None) -> Opti
 # -----------------------
 # Admin Commands
 # -----------------------
-def get_user_id(target_alias: str, sender_name: str, sender_id: str, original_text: str, group_id: str) -> bool:
+def get_user_id(target_alias: str, sender_name: str, sender_id: str, original_text: str) -> bool:
     if str(sender_id) not in ADMIN_IDS:
-        send_system_message(f"> @{sender_name}: {original_text}\nError: Only admins can use this command", group_id)
+        send_system_message(f"> @{sender_name}: {original_text}\nError: Only admins can use this command")
         return False
-    result = fuzzy_find_member(target_alias, group_id)
+    if not ACCESS_TOKEN or not GROUP_ID:
+        send_system_message(f"> @{sender_name}: {original_text}\nError: Missing ACCESS_TOKEN or GROUP_ID")
+        return False
+    result = fuzzy_find_member(target_alias)
     if not result:
-        send_system_message(f"> @{sender_name}: {original_text}\nNo user found matching '{target_alias}'", group_id)
+        send_system_message(f"> @{sender_name}: {original_text}\nNo user found matching '{target_alias}'")
         return False
     user_id, nickname = result
-    send_system_message(f"> @{sender_name}: {original_text}\n{nickname}'s user_id is {user_id}", group_id)
+    send_system_message(f"> @{sender_name}: {original_text}\n{nickname}'s user_id is {user_id}")
     return True
 
-def unban_user(target_alias: str, sender: str, sender_id: str, full_text: str, group_id: str) -> None:
+def unban_user(target_alias: str, sender: str, sender_id: str, full_text: str) -> None:
     try:
         if str(sender_id) not in ADMIN_IDS:
-            send_system_message(f"> @{sender}: {full_text}\nError: Only admins can use this command", group_id)
+            send_system_message(f"> @{sender}: {full_text}\nError: Only admins can use this command")
+            return
+        if not ACCESS_TOKEN or not GROUP_ID:
+            send_system_message(f"> @{sender}: {full_text}\nError: Missing ACCESS_TOKEN or GROUP_ID")
             return
         match_user_id = None
         match_nickname = None
-        fuzzy_result = fuzzy_find_member(target_alias, group_id)
+        fuzzy_result = fuzzy_find_member(target_alias)
         if fuzzy_result:
             match_user_id, match_nickname = fuzzy_result
         if not match_user_id:
@@ -556,7 +445,7 @@ def unban_user(target_alias: str, sender: str, sender_id: str, full_text: str, g
                     match_nickname = uname
                     break
         if not match_user_id:
-            send_system_message(f"> @{sender}: {full_text}\nNo record of '{target_alias}' in banned list or group members.", group_id)
+            send_system_message(f"> @{sender}: {full_text}\nNo record of '{target_alias}' in banned list or group members.")
             return
         nickname = match_nickname or "Member"
         match_user_id = str(match_user_id)
@@ -567,7 +456,7 @@ def unban_user(target_alias: str, sender: str, sender_id: str, full_text: str, g
             payload = {"members": [{"nickname": nick_to_add, "user_id": match_user_id}]}
             try:
                 resp = requests.post(
-                    f"{API_URL}/groups/{group_id}/members/add",
+                    f"{API_URL}/groups/{GROUP_ID}/members/add",
                     headers={"X-Access-Token": ACCESS_TOKEN},
                     json=payload,
                     timeout=12
@@ -582,12 +471,12 @@ def unban_user(target_alias: str, sender: str, sender_id: str, full_text: str, g
                 data = resp.json()
             except Exception:
                 time.sleep(3)
-                new_members = get_group_members(group_id)
+                new_members = get_group_members()
                 return (any(str(m.get("user_id")) == match_user_id for m in new_members), 0)
             results_id = data.get('response', {}).get('results_id')
             if not results_id:
                 time.sleep(3)
-                new_members = get_group_members(group_id)
+                new_members = get_group_members()
                 return (any(str(m.get("user_id")) == match_user_id for m in new_members), 0)
             max_polls = 15
             for attempt in range(max_polls):
@@ -595,7 +484,7 @@ def unban_user(target_alias: str, sender: str, sender_id: str, full_text: str, g
                 time.sleep(sleep_time)
                 try:
                     poll_resp = requests.get(
-                        f"{API_URL}/groups/{group_id}/members/results/{results_id}",
+                        f"{API_URL}/groups/{GROUP_ID}/members/results/{results_id}",
                         headers={"X-Access-Token": ACCESS_TOKEN},
                         timeout=8
                     )
@@ -619,7 +508,7 @@ def unban_user(target_alias: str, sender: str, sender_id: str, full_text: str, g
 
         success, status_code = attempt_add(safe_name)
         if success:
-            send_system_message(f"> @{sender}: {full_text}\n{nickname} re-added to the group.", group_id)
+            send_system_message(f"> @{sender}: {full_text}\n{nickname} re-added to the group.")
             banned_users.pop(match_user_id, None)
             save_json(banned_users_file, banned_users)
             user_swear_counts.pop(match_user_id, None)
@@ -630,9 +519,9 @@ def unban_user(target_alias: str, sender: str, sender_id: str, full_text: str, g
             save_json(former_members_file, former_members)
             return
         time.sleep(6)
-        members_after = get_group_members(group_id)
+        members_after = get_group_members()
         if any(str(m.get("user_id")) == match_user_id for m in members_after):
-            send_system_message(f"> @{sender}: {full_text}\n{nickname} re-added to the group.", group_id)
+            send_system_message(f"> @{sender}: {full_text}\n{nickname} re-added to the group.")
             banned_users.pop(match_user_id, None)
             save_json(banned_users_file, banned_users)
             user_swear_counts.pop(match_user_id, None)
@@ -646,7 +535,7 @@ def unban_user(target_alias: str, sender: str, sender_id: str, full_text: str, g
         logger.warning(f"Primary unban failed; retrying with '{retry_name}'.")
         success, _ = attempt_add(retry_name)
         if success:
-            send_system_message(f"> @{sender}: {full_text}\n{retry_name} re-added after retry.", group_id)
+            send_system_message(f"> @{sender}: {full_text}\n{retry_name} re-added after retry.")
             banned_users.pop(match_user_id, None)
             save_json(banned_users_file, banned_users)
             user_swear_counts.pop(match_user_id, None)
@@ -656,39 +545,42 @@ def unban_user(target_alias: str, sender: str, sender_id: str, full_text: str, g
             former_members.pop(match_user_id, None)
             save_json(former_members_file, former_members)
             return
-        share_url = get_group_share_url(group_id)
+        share_url = get_group_share_url()
         error_msg = f"GroupMe sync delay, cooldown, or API failure (code {status_code})"
         fallback_msg = f"Could not re-add {nickname}. {error_msg}. "
         if share_url:
             fallback_msg += f"Send them: {share_url}"
-        send_system_message(f"> @{sender}: {full_text}\n{fallback_msg}", group_id)
+        send_system_message(f"> @{sender}: {full_text}\n{fallback_msg}")
     except Exception as e:
         logger.error(f"unban_user error: {e}")
-        send_system_message(f"> @{sender}: {full_text}\nError unbanning '{target_alias}': {str(e)}", group_id)
+        send_system_message(f"> @{sender}: {full_text}\nError unbanning '{target_alias}': {str(e)}")
 
-def ban_user_command(target_alias: str, sender_name: str, sender_id: str, original_text: str, group_id: str) -> bool:
+def ban_user_command(target_alias: str, sender_name: str, sender_id: str, original_text: str) -> bool:
     if str(sender_id) not in ADMIN_IDS:
-        send_system_message(f"> @{sender_name}: {original_text}\nError: Only admins can use this command", group_id)
+        send_system_message(f"> @{sender_name}: {original_text}\nError: Only admins can use this command")
         return False
-    result = fuzzy_find_member(target_alias, group_id)
+    if not ACCESS_TOKEN or not GROUP_ID:
+        send_system_message(f"> @{sender_name}: {original_text}\nError: Missing ACCESS_TOKEN or GROUP_ID")
+        return False
+    result = fuzzy_find_member(target_alias)
     if not result:
-        send_system_message(f"> @{sender_name}: {original_text}\nNo user found matching '{target_alias}'", group_id)
+        send_system_message(f"> @{sender_name}: {original_text}\nNo user found matching '{target_alias}'")
         return False
     target_user_id, target_username = result
-    success = call_ban_service(target_user_id, target_username, "Admin ban command", group_id)
+    success = call_ban_service(target_user_id, target_username, "Admin ban command")
     if success:
-        send_system_message(f"> @{sender_name}: {original_text}\n{target_username} has been permanently banned by admin command.", group_id)
+        send_system_message(f"> @{sender_name}: {original_text}\n{target_username} has been permanently banned by admin command.")
     else:
-        send_system_message(f"> @{sender_name}: {original_text}\nError: Failed to ban {target_username}", group_id)
+        send_system_message(f"> @{sender_name}: {original_text}\nError: Failed to ban {target_username}")
     return success
 
-def record_strike(target_alias: str, admin_name: str, admin_id: str, original_text: str, group_id: str) -> None:
+def record_strike(target_alias: str, admin_name: str, admin_id: str, original_text: str) -> None:
     if str(admin_id) not in ADMIN_IDS:
-        send_system_message(f"> @{admin_name}: {original_text}\nError: Only admins can issue 'strike' commands.", group_id)
+        send_system_message(f"> @{admin_name}: {original_text}\nError: Only admins can issue 'strike' commands.")
         return
-    result = fuzzy_find_member(target_alias, group_id)
+    result = fuzzy_find_member(target_alias)
     if not result:
-        send_system_message(f"> @{admin_name}: {original_text}\nNo user found matching '{target_alias}'.", group_id)
+        send_system_message(f"> @{admin_name}: {original_text}\nNo user found matching '{target_alias}'.")
         return
     user_id, nickname = result
     user_id = str(user_id)
@@ -698,55 +590,63 @@ def record_strike(target_alias: str, admin_name: str, admin_id: str, original_te
     save_json(strikes_file, user_strikes)
     count = user_strikes[user_id]
     logger.info(f"Recorded strike for {nickname} ({user_id}) — total strikes: {count}")
-    send_system_message(f"> @{admin_name}: {original_text}\nStrike recorded for {nickname} ({user_id}). Total strikes: {count}", group_id)
+    send_system_message(f"> @{admin_name}: {original_text}\nStrike recorded for {nickname} ({user_id}). Total strikes: {count}")
 
-def get_strikes_report(target_alias: str, requester_name: str, requester_id: str, original_text: str, group_id: str) -> None:
+def get_strikes_report(target_alias: str, requester_name: str, requester_id: str, original_text: str) -> None:
     if str(requester_id) not in ADMIN_IDS:
-        send_system_message(f"> @{requester_name}: {original_text}\nError: Only admins can use '!strikes' command.", group_id)
+        send_system_message(f"> @{requester_name}: {original_text}\nError: Only admins can use '!strikes' command.")
         return
-    result = fuzzy_find_member(target_alias, group_id)
+    result = fuzzy_find_member(target_alias)
     if not result:
-        send_system_message(f"> @{requester_name}: {original_text}\nNo user found matching '{target_alias}'.", group_id)
+        send_system_message(f"> @{requester_name}: {original_text}\nNo user found matching '{target_alias}'.")
         return
     user_id, nickname = result
     user_id = str(user_id)
     count = int(user_strikes.get(user_id, 0))
-    send_system_message(f"> @{requester_name}: {original_text}\n{nickname} ({user_id}) has {count} strike(s).", group_id)
+    send_system_message(f"> @{requester_name}: {original_text}\n{nickname} ({user_id}) has {count} strike(s).")
 
 # -----------------------
 # Violation Detection with Deletion
 # -----------------------
-def check_for_violations(text: str, user_id: str, username: str, message_id: str, group_id: str) -> bool:
+def check_for_violations(text: str, user_id: str, username: str, message_id: str) -> bool:
+    """
+    Check for muted users first, then swears/instant bans.
+    Deletes message + sends warning if muted or violation.
+    """
     uid = str(user_id)
     now = time.time()
     deleted = False
 
+    # === MUTE CHECK: Auto-delete if user is muted ===
     if uid in muted_users and now < muted_users[uid]:
         minutes_left = int((muted_users[uid] - now) / 60) + 1
-        if delete_message(message_id, group_id):
+        if delete_message(message_id):
             logger.info(f"MUTED MSG DELETED: {username} ({uid}), {minutes_left}m left")
             deleted = True
-        return deleted
+        return deleted  # Skip swear checks
 
+    # === Clean expired mutes ===
     expired = [u for u, until in list(muted_users.items()) if now >= until]
     for u in expired:
         del muted_users[u]
     if expired:
         logger.info(f"Cleaned {len(expired)} expired mutes")
 
+    # === Instant Ban Words ===
     text_lower = text.lower()
     text_words = text_lower.split()
     for word in text_words:
         clean_word = word.strip('.,!?"\'()[]{}').lower()
         if clean_word in INSTANT_BAN_WORDS:
             logger.info(f"INSTANT BAN: '{clean_word}' from {username} (msg {message_id})")
-            delete_message(message_id, group_id)
-            success = call_ban_service(uid, username, f"Instant ban: {clean_word}", group_id)
+            delete_message(message_id)
+            success = call_ban_service(uid, username, f"Instant ban: {clean_word}")
             if success:
-                send_system_message(f"{username} has been permanently banned for using prohibited language. (Message deleted)", group_id)
+                send_system_message(f"{username} has been permanently banned for using prohibited language. (Message deleted)")
             deleted = True
             return True
 
+    # === Regular Swear Words (Strike System) ===
     for word in text_words:
         clean_word = word.strip('.,!?"\'()[]{}').lower()
         if clean_word in REGULAR_SWEAR_WORDS:
@@ -757,60 +657,70 @@ def check_for_violations(text: str, user_id: str, username: str, message_id: str
             current_count = user_swear_counts[uid]
             logger.info(f"{username} swear count: {current_count}/10 (msg {message_id})")
             
-            delete_message(message_id, group_id)
+            delete_message(message_id)
             
             if current_count >= 10:
-                success = call_ban_service(uid, username, f"10 strikes - swear words", group_id)
+                success = call_ban_service(uid, username, f"10 strikes - swear words")
                 if success:
-                    send_system_message(f"{username} has been banned for repeated inappropriate language (10 strikes). (Message deleted)", group_id)
+                    send_system_message(f"{username} has been banned for repeated inappropriate language (10 strikes). (Message deleted)")
                     user_swear_counts[uid] = 0
                     save_json(user_swear_counts_file, user_swear_counts)
                 deleted = True
                 return True
             else:
                 remaining = 10 - current_count
-                send_system_message(f"{username} ({uid}) - Warning {current_count}/10 for inappropriate language. {remaining} more and you're banned! (Message deleted)", group_id)
+                send_system_message(f"{username} ({uid}) - Warning {current_count}/10 for inappropriate language. {remaining} more and you're banned! (Message deleted)")
             deleted = True
-            break
+            break  # Only one swear per message
 
     return deleted
 
 # -----------------------
 # Message Sending
 # -----------------------
-def send_system_message(text: str, target_group_id: Optional[str] = None) -> bool:
-    global last_system_message_time
+def send_system_message(text: str) -> bool:
+    global last_system_message_time, system_messages_enabled
+    if not BOT_ID:
+        logger.error("No BOT_ID configured")
+        return False
+    is_strike_or_ban = any(k in text for k in ["Warning", "banned", "Strike", "ban", "deleted"])
+    if not is_strike_or_ban and not system_messages_enabled:
+        return False
+    now = time.time()
+    if not is_strike_or_ban and now - last_system_message_time < cooldown_seconds:
+        return False
+    url = "https://api.groupme.com/v3/bots/post"
+    payload = {"bot_id": BOT_ID, "text": text}
+    try:
+        response = requests.post(url, json=payload, timeout=8)
+        response.raise_for_status()
+        if not is_strike_or_ban:
+            last_system_message_time = now
+        logger.info(f"System message sent: {text[:80]}")
+        return True
+    except Exception as e:
+        logger.error(f"GroupMe send error: {e}")
+        return False
+
+def send_message(text: str) -> bool:
+    global last_sent_time, system_messages_enabled
     if not system_messages_enabled:
         return False
     now = time.time()
-    if now - last_system_message_time < cooldown_seconds:
-        return False
-    success = send_message(text, target_group_id)
-    if success:
-        last_system_message_time = now
-    return success
-
-def send_message(text: str, target_group_id: Optional[str] = None) -> bool:
-    global last_sent_time
-    if not BOT_ID:
-        return False
-    gid = target_group_id or GROUP_ID
-    now = time.time()
     if now - last_sent_time < cooldown_seconds:
         return False
+    if not BOT_ID:
+        return False
     url = "https://api.groupme.com/v3/bots/post"
-    payload = {"bot_id": BOT_ID, "text": text, "group_id": str(gid)}
+    payload = {"bot_id": BOT_ID, "text": text}
     try:
         response = requests.post(url, json=payload, timeout=8)
-        if response.status_code == 200:
-            last_sent_time = now
-            logger.info(f"Sent to {gid}: {text[:60]}")
-            return True
-        else:
-            logger.error(f"Send failed {response.status_code}: {response.text}")
-            return False
+        response.raise_for_status()
+        last_sent_time = now
+        logger.info(f"Regular message sent: {text[:80]}")
+        return True
     except Exception as e:
-        logger.error(f"Send error: {e}")
+        logger.error(f"GroupMe send error: {e}")
         return False
 
 def send_dm(recipient_id: str, text: str) -> bool:
@@ -891,7 +801,7 @@ def _build_leaderboard_message(top_n: int = 3) -> str:
         _ensure_today_keys()
         if not daily_message_counts:
             return "Daily Unemployed Leaders:\nNo messages recorded today."
-        members = get_group_members(GROUP_ID)
+        members = get_group_members()
         id_to_nick = {str(m.get("user_id")): m.get("nickname") for m in members if m.get("user_id")}
         fallback = {str(k): v for k, v in former_members.items()}
         sorted_items = sorted(daily_message_counts.items(), key=lambda kv: (-int(kv[1]), kv[0]))
@@ -933,7 +843,7 @@ def daily_leaderboard_worker():
                 time.sleep(sleep_chunk)
                 secs -= sleep_chunk
             msg = _build_leaderboard_message()
-            if send_message(msg, GROUP_ID):
+            if send_message(msg):
                 logger.info("Posted daily leaderboard.")
             else:
                 logger.warning("Failed to post leaderboard.")
@@ -996,8 +906,8 @@ next_nft_id = max([int(k) for k in game_data["nfts"]], default=0) + 1
 # -----------------------
 # Get Message Likes
 # -----------------------
-def get_message_likes(message_id: str, group_id: str) -> int:
-    url = f"{GROUPME_API}/groups/{group_id}/messages/{message_id}?token={ACCESS_TOKEN}"
+def get_message_likes(message_id: str) -> int:
+    url = f"{GROUPME_API}/groups/{GROUP_ID}/messages/{message_id}?token={ACCESS_TOKEN}"
     try:
         resp = requests.get(url, timeout=8)
         if resp.status_code == 200:
@@ -1019,11 +929,11 @@ def rarity_update_worker():
             now = time.time()
             updated = False
             for nft_id, info in list(game_data["pending_rarity"].items()):
-                if now - info["mint_time"] >= 86400:
-                    likes = get_message_likes(info["message_id"], info.get("group_id", GROUP_ID))
-                    rarity = min(10, max(1, likes // 2 + 1))
+                if now - info["mint_time"] >= 86400:  # 24 hours
+                    likes = get_message_likes(info["message_id"])
+                    rarity = min(10, max(1, likes // 2 + 1))  # e.g., 0 likes =1, 2=2, 20+=10
                     game_data["nfts"][nft_id]["rarity"] = rarity
-                    game_data["nfts"][nft_id]["price"] = rarity * 50
+                    game_data["nfts"][nft_id]["price"] = rarity * 50  # Update price
                     send_dm(game_data["nfts"][nft_id]["owner"], f"Your MemeNFT #{nft_id} rarity updated to {rarity} based on {likes} likes!")
                     del game_data["pending_rarity"][nft_id]
                     updated = True
@@ -1031,23 +941,16 @@ def rarity_update_worker():
                 save_game_data(game_data)
         except Exception as e:
             logger.error(f"Rarity worker error: {e}")
-        time.sleep(3600)
+        time.sleep(3600)  # Check hourly
 
+# Start Thread
 t_rarity = threading.Thread(target=rarity_update_worker, daemon=True)
 t_rarity.start()
 
-# -----------------------
-# Global Pending Actions
-# -----------------------
-pending_actions = {}
-
-# -----------------------
-# Webhook
-# -----------------------
 @app.route('/webhook', methods=['POST'])
 def webhook():
     try:
-        global system_messages_enabled, game_data, next_nft_id
+        global system_messages_enabled, game_data, next_nft_id, pending_actions
         data = request.get_json()
         if not data:
             return '', 200
@@ -1059,30 +962,26 @@ def webhook():
         message_id = data.get('id')
         text_lower = text.lower()
         attachments = data.get("attachments", [])
-        current_group_id = str(data.get("group_id", GROUP_ID))
-        is_subtopic = current_group_id == SUBTOPIC_ID
+        is_dm = 'group_id' not in data or not data['group_id']
 
-        # === SYSTEM MESSAGES ===
+        # === SYSTEM MESSAGES (Join / Leave / Ban) ===
         if sender_type == "system" or is_system_message(data):
             if is_real_system_event(text_lower):
                 if 'has left the group' in text_lower or 'was removed from the group' in text_lower:
                     key = user_id or f"ghost-{sender}"
                     former_members[str(key)] = sender
                     save_json(former_members_file, former_members)
-                    if current_group_id == GROUP_ID:
-                        send_system_message("GAY", GROUP_ID)
+                    send_system_message("GAY")
                 elif 'has joined the group' in text_lower:
-                    if current_group_id == GROUP_ID:
-                        send_system_message("Welcome to Clean Memes, check the rules and announcement topics before chatting!", GROUP_ID)
+                    send_system_message("Welcome to Clean Memes, check the rules and announcement topics before chatting!")
                 elif 'has rejoined the group' in text_lower:
-                    if current_group_id == GROUP_ID:
-                        send_system_message("oh look who's back", GROUP_ID)
+                    send_system_message("oh look who's back")
             return '', 200
         if sender_type not in ['user']:
             return '', 200
 
-        # === DM REPLY HANDLING ===
-        if 'group_id' not in data and user_id in pending_actions:
+        # === DM REPLY HANDLING (Trade Confirmations) ===
+        if is_dm and user_id in pending_actions:
             action = pending_actions[user_id]
             if action["action"] == "trade_accept" and text_lower.strip() == "yes":
                 sender_id = action["sender"]
@@ -1094,45 +993,130 @@ def webhook():
                     old_owner = nft["owner"]
                     nft["owner"] = user_id
                     save_game_data(game_data)
-                    send_message(f"**TRADE COMPLETE**! <@{user_id}> accepted MemeNFT #{nft_id} from <@{sender_id}>!", SUBTOPIC_ID)
+                    send_message(f"**TRADE COMPLETE**! <@{user_id}> accepted MemeNFT #{nft_id} from <@{sender_id}>!")
                 del pending_actions[user_id]
                 if sender_id in pending_actions:
                     del pending_actions[sender_id]
             return '', 200
 
-        # === VIOLATION CHECK ===
+        # === VIOLATION CHECK (Swear Filter, Mute, Ban) ===
         if user_id and text and message_id:
-            deleted = check_for_violations(text, user_id, sender, str(message_id), current_group_id)
+            deleted = check_for_violations(text, user_id, sender, str(message_id))
             if deleted:
                 return '', 200
 
-        # === DAILY COUNT ===
+        # === DAILY MESSAGE COUNT ===
         if user_id and text:
             increment_user_message_count(user_id, sender, text)
 
-        # === ALLOW EVERYWHERE: !balance, !unemployed ===
-        if text_lower.strip() == '!balance':
-            balance = game_data["balances"].get(user_id, 0)
-            send_message(f"@{sender} Your MemeCoin balance: **{balance} Coins**", current_group_id)
+        # === ADMIN COMMANDS ===
+        if text_lower.startswith('!mute '):
+            if str(user_id) not in ADMIN_IDS:
+                send_system_message(f"> @{sender}: {text}\nOnly admins can use !mute")
+                return '', 200
+            parts = text.split()
+            if len(parts) < 2:
+                send_system_message(f"> @{sender}: Usage: `!mute @User [minutes]`")
+                return '', 200
+            target_name = parts[1].lstrip('@')
+            minutes = int(parts[2]) if len(parts) > 2 else 30
+            target = fuzzy_find_member(target_name)
+            if not target:
+                send_system_message(f"> @{sender}: User not found")
+                return '', 200
+            target_id, target_nick = target
+            muted_users[target_id] = time.time() + minutes * 60
+            send_system_message(f"{target_nick} has been muted for {minutes} minute(s).")
             return '', 200
 
-        if text_lower.strip() == '!unemployed':
-            msg = _build_leaderboard_message()
-            send_message(msg, current_group_id)
+        if text_lower.startswith('!unmute '):
+            if str(user_id) not in ADMIN_IDS:
+                send_system_message(f"> @{sender}: Only admins can use !unmute")
+                return '', 200
+            target_name = text[len('!unmute '):].strip().lstrip('@')
+            target = fuzzy_find_member(target_name)
+            if not target:
+                send_system_message(f"> @{sender}: User not found")
+                return '', 200
+            target_id, _ = target
+            if target_id in muted_users:
+                del muted_users[target_id]
+                send_system_message(f"{target_name} has been unmuted.")
+            else:
+                send_system_message(f"{target_name} was not muted.")
             return '', 200
 
-        # === NFT COMMANDS ONLY IN SUBTOPIC ===
-        if not is_subtopic:
+        if text_lower.startswith('!ban '):
+            if str(user_id) not in ADMIN_IDS:
+                send_system_message(f"> @{sender}: Only admins can use !ban")
+                return '', 200
+            target_name = text[len('!ban '):].strip().lstrip('@')
+            ban_user_command(target_name, sender, user_id, text)
             return '', 200
 
-        # === NFT COMMANDS BELOW ===
+        if text_lower.startswith('!unban '):
+            if str(user_id) not in ADMIN_IDS:
+                send_system_message(f"> @{sender}: Only admins can use !unban")
+                return '', 200
+            target_name = text[len('!unban '):].strip().lstrip('@')
+            unban_user(target_name, sender, user_id, text)
+            return '', 200
+
+        if text_lower.startswith('!delete '):
+            if str(user_id) not in ADMIN_IDS:
+                send_system_message(f"> @{sender}: Only admins can use !delete")
+                return '', 200
+            try:
+                msg_id = text.split()[1]
+                if delete_message(msg_id):
+                    send_system_message(f"Message {msg_id} deleted by @{sender}.")
+                else:
+                    send_system_message(f"Failed to delete message {msg_id}.")
+            except:
+                send_system_message("Usage: `!delete MESSAGE_ID`")
+            return '', 200
+
+        if text_lower.startswith('!getid '):
+            target_name = text[len('!getid '):].strip().lstrip('@')
+            get_user_id(target_name, sender, user_id, text)
+            return '', 200
+
+        if text_lower.startswith('!strike '):
+            if str(user_id) not in ADMIN_IDS:
+                send_system_message(f"> @{sender}: Only admins can issue strikes")
+                return '', 200
+            target_name = text[len('!strike '):].strip().lstrip('@')
+            record_strike(target_name, sender, user_id, text)
+            return '', 200
+
+        if text_lower.startswith('!strikes '):
+            if str(user_id) not in ADMIN_IDS:
+                send_system_message(f"> @{sender}: Only admins can view strikes")
+                return '', 200
+            target_name = text[len('!strikes '):].strip().lstrip('@')
+            get_strikes_report(target_name, sender, user_id, text)
+            return '', 200
+
+        if text_lower == '!system on' and str(user_id) in ADMIN_IDS:
+            system_messages_enabled = True
+            save_system_messages_enabled(True)
+            send_system_message("System messages **ENABLED** by admin.")
+            return '', 200
+
+        if text_lower == '!system off' and str(user_id) in ADMIN_IDS:
+            system_messages_enabled = False
+            save_system_messages_enabled(False)
+            send_system_message("System messages **DISABLED** by admin.")
+            return '', 200
+
+        # === MEME NFT COMMANDS ===
         if text_lower.strip() == '!memeupload' and attachments:
             image_att = next((att for att in attachments if att.get("type") == "image"), None)
             if not image_att:
-                send_message(f"@{sender} Upload an image with `!memeupload`!", current_group_id)
+                send_message(f"@{sender} Upload an image with `!memeupload`!")
                 return '', 200
             if user_id in game_data["has_minted"]:
-                send_message(f"@{sender} One mint per player! You already uploaded.", current_group_id)
+                send_message(f"@{sender} One mint per player! You already uploaded.")
                 return '', 200
 
             img_url = image_att.get("url")
@@ -1150,8 +1134,7 @@ def webhook():
             game_data["has_minted"].add(user_id)
             game_data["pending_rarity"][nft_id] = {
                 "message_id": message_id,
-                "mint_time": time.time(),
-                "group_id": current_group_id
+                "mint_time": time.time()
             }
             save_game_data(game_data)
             next_nft_id += 1
@@ -1160,15 +1143,14 @@ def webhook():
                 f"**{sender} MINTED MemeNFT #{nft_id}!**\n"
                 f"**Initial Rarity:** 1/10 | **Price:** 50 Coins\n"
                 f"*Final rarity set in 24h based on likes!*\n"
-                f"[View Meme]({img_url})",
-                current_group_id
+                f"[View Meme]({img_url})"
             )
             return '', 200
 
         if text_lower.strip() == '!mymeme':
             owned = [nft for nft_id, nft in game_data["nfts"].items() if nft["owner"] == user_id]
             if not owned:
-                send_message(f"@{sender} No meme yet! Use `!memeupload` with an image.", current_group_id)
+                send_message(f"@{sender} No meme yet! Use `!memeupload` with an image.")
                 return '', 200
             nft = owned[0]
             nft_id = next(k for k, v in game_data["nfts"].items() if v == nft)
@@ -1177,8 +1159,7 @@ def webhook():
                 f"**Your MemeNFT #{nft_id}**\n"
                 f"**{nft['name']}** | Rarity: **{nft['rarity']}/10** | Price: **{nft['price']} Coins**\n"
                 f"Status: {status}\n"
-                f"[View]({nft['url']})",
-                current_group_id
+                f"[View]({nft['url']})"
             )
             return '', 200
 
@@ -1186,19 +1167,19 @@ def webhook():
             try:
                 nft_id = text[len('!buy '):].strip()
                 if nft_id not in game_data["nfts"]:
-                    send_message("NFT not found!", current_group_id)
+                    send_message("NFT not found!")
                     return '', 200
                 nft = game_data["nfts"][nft_id]
                 if not nft["listed"]:
-                    send_message("This NFT is not for sale!", current_group_id)
+                    send_message("This NFT is not for sale!")
                     return '', 200
                 if nft["owner"] == user_id:
-                    send_message("You already own this!", current_group_id)
+                    send_message("You already own this!")
                     return '', 200
                 cost = nft["price"]
                 balance = game_data["balances"].get(user_id, 0)
                 if cost > balance:
-                    send_message("Not enough MemeCoins!", current_group_id)
+                    send_message("Not enough MemeCoins!")
                     return '', 200
 
                 old_owner = nft["owner"]
@@ -1210,12 +1191,11 @@ def webhook():
 
                 send_message(
                     f"**SOLD!** <@{user_id}> bought MemeNFT #{nft_id} for **{cost} Coins** from <@{old_owner}>!\n"
-                    f"[View]({nft['url']})",
-                    current_group_id
+                    f"[View]({nft['url']})"
                 )
                 return '', 200
             except:
-                send_message("Usage: `!buy ID`", current_group_id)
+                send_message("Usage: `!buy ID`")
                 return '', 200
 
         if text_lower.startswith('!list '):
@@ -1224,45 +1204,40 @@ def webhook():
                 nft_id = parts[0]
                 price = int(parts[1])
                 if nft_id not in game_data["nfts"]:
-                    send_message("NFT not found!", current_group_id)
+                    send_message("NFT not found!")
                     return '', 200
                 nft = game_data["nfts"][nft_id]
                 if nft["owner"] != user_id:
-                    send_message("You don't own this NFT!", current_group_id)
+                    send_message("You don't own this NFT!")
                     return '', 200
                 if price < 10:
-                    send_message("Minimum price: 10 Coins", current_group_id)
+                    send_message("Minimum price: 10 Coins")
                     return '', 200
                 nft["listed"] = True
                 nft["price"] = price
                 save_game_data(game_data)
-                send_message(f"MemeNFT #{nft_id} listed for **{price} Coins**!", current_group_id)
+                send_message(f"MemeNFT #{nft_id} listed for **{price} Coins**!")
                 return '', 200
             except:
-                send_message("Usage: `!list ID Price`", current_group_id)
+                send_message("Usage: `!list ID Price`")
                 return '', 200
-
-        if text_lower.startswith('!delete '):
-            msg_id = text[len('!delete '):].strip()
-            delete_command(msg_id, sender, user_id, text, current_group_id)
-            return '', 200
 
         if text_lower.startswith('!trade '):
             try:
                 parts = text[len('!trade '):].strip().split()
                 target_name = parts[0].lstrip('@')
                 nft_id = parts[1]
-                target = fuzzy_find_member(target_name, current_group_id)
+                target = fuzzy_find_member(target_name)
                 if not target:
-                    send_message("User not found!", current_group_id)
+                    send_message("User not found!")
                     return '', 200
                 target_id, _ = target
                 if nft_id not in game_data["nfts"]:
-                    send_message("NFT not found!", current_group_id)
+                    send_message("NFT not found!")
                     return '', 200
                 nft = game_data["nfts"][nft_id]
                 if nft["owner"] != user_id:
-                    send_message("You don't own this NFT!", current_group_id)
+                    send_message("You don't own this NFT!")
                     return '', 200
 
                 pending_actions[user_id] = {"action": "trade_offer", "target": target_id, "nft_id": nft_id}
@@ -1272,7 +1247,7 @@ def webhook():
                 send_dm(target_id, f"<@{user_id}> wants to trade you MemeNFT #{nft_id}. Reply **YES** in DM to accept.")
                 return '', 200
             except:
-                send_message("Usage: `!trade @User ID`", current_group_id)
+                send_message("Usage: `!trade @User ID`")
                 return '', 200
 
         if text_lower.strip() == '!market':
@@ -1281,40 +1256,48 @@ def webhook():
                 if nft["listed"]:
                     listed.append(f"#{nid} — **{nft['price']} Coins** (Rarity {nft['rarity']}) by <@{nft['owner']}>")
             if not listed:
-                send_message("**Meme Market**\nNothing for sale yet!", current_group_id)
+                send_message("**Meme Market**\nNothing for sale yet!")
             else:
                 msg = "**Meme Market**\n" + "\n".join(listed[:10])
                 if len(listed) > 10:
                     msg += f"\n...and {len(listed)-10} more!"
-                send_message(msg, current_group_id)
+                send_message(msg)
             return '', 200
 
-        if text_lower.startswith('!ban '):
-            target = text[len('!ban '):].strip()
-            ban_command(target, sender, user_id, text, current_group_id)
-            return '', 200
-
+                # -------------------------------------------------
+        # SHOW COLLECTION IN GROUP (NOT DM)
+        # -------------------------------------------------
+        # -------------------------------------------------
+        # !collection – show in GROUP (chunked for length)
+        # -------------------------------------------------
         if text_lower.strip() == '!collection':
-            owned = [(nid, nft) for nid, nft in game_data["nfts"].items() if nft["owner"] == user_id]
+            owned = [(nid, nft) for nid, nft in game_data["nfts"].items()
+                     if nft["owner"] == user_id]
             if not owned:
-                send_message(f"@{sender} You don't own any MemeNFTs yet! Use `!memeupload`", current_group_id)
+                send_message(f"@{sender} You don't own any MemeNFTs yet! Use `!memeupload`")
                 return '', 200
 
+            # Header
             header = f"**{sender}'s Meme Collection** ({len(owned)} NFT{'s' if len(owned)>1 else ''})"
             lines = [header]
 
             for nid, nft in owned:
-                status = ("In Wallet" if not nft.get("listed") else f"Listed @ {nft['price']} Coins")
-                lines.append(f"• **#{nid}** | {nft.get('name','Untitled')} | Rarity: **{nft['rarity']}/10** | {status}")
+                status = ("In Wallet" if not nft.get("listed")
+                          else f"Listed @ {nft['price']} Coins")
+                lines.append(
+                    f"• **#{nid}** | {nft.get('name','Untitled')} | Rarity: **{nft['rarity']}/10** | {status}"
+                )
 
+            # Optional total value
             total = sum(nft["rarity"]*50 for _, nft in owned if not nft.get("listed"))
             total += game_data["balances"].get(user_id, 0)
             lines.append(f"**Total Portfolio Value: {total} Coins**")
 
+            # ---- Chunk into ≤ 900-char messages ----
             msgs = []
             cur = ""
             for ln in lines:
-                if len(cur) + len(ln) + 1 > 900:
+                if len(cur) + len(ln) + 1 > 900:          # +1 for \n
                     msgs.append(cur.strip())
                     cur = ln + "\n"
                 else:
@@ -1322,18 +1305,20 @@ def webhook():
             if cur:
                 msgs.append(cur.strip())
 
+            # ---- Send each chunk ----
             for i, m in enumerate(msgs):
                 if i > 0:
-                    time.sleep(1)
-                if not send_message(m, current_group_id):
+                    time.sleep(1)                     # respect rate-limit
+                if not send_message(m):
                     logger.error(f"Collection chunk {i+1} failed")
                     break
             return '', 200
 
         if text_lower.strip() == '!mememoney':
-            members = get_group_members(GROUP_ID)
+            # Build name lookup: user_id → nickname
+            members = get_group_members()
             name_map = {str(m["user_id"]): m["nickname"] for m in members if m.get("user_id")}
-            name_map.update(former_members)
+            name_map.update(former_members)  # include left/banned users
 
             portfolio = {}
             for uid in {nft["owner"] for nft in game_data["nfts"].values()}:
@@ -1341,12 +1326,23 @@ def webhook():
                 portfolio[uid] = value
 
             if not portfolio:
-                send_message("No portfolios yet!", current_group_id)
+                send_message("No portfolios yet!")
                 return '', 200
 
             top = sorted(portfolio.items(), key=lambda x: -x[1])[:5]
-            lines = [f"{i+1}. {name_map.get(uid, f'User {uid}')} — **{val} Total Value**" for i, (uid, val) in enumerate(top)]
-            send_message("**Top Meme Collectors**\n" + "\n".join(lines), current_group_id)
+            lines = [f"{i+1}. {name_map.get(uid, f'User {uid}')} — **{val} Total Value**" 
+                     for i, (uid, val) in enumerate(top)]
+            send_message("**Top Meme Collectors**\n" + "\n".join(lines))
+            return '', 200
+
+        if text_lower.strip() == '!unemployed':
+            msg = _build_leaderboard_message()
+            send_message(msg)
+            return '', 200
+
+        if text_lower.strip() == '!balance':
+            balance = game_data["balances"].get(user_id, 0)
+            send_message(f"Your MemeCoin balance: **{balance} Coins**")
             return '', 200
 
         if text_lower.strip() == '!resetmeme' and str(user_id) in ADMIN_IDS:
@@ -1358,7 +1354,7 @@ def webhook():
             }
             next_nft_id = 1
             save_game_data(game_data)
-            send_message("Meme NFT game reset by admin!", current_group_id)
+            send_message("Meme NFT game reset by admin!")
             return '', 200
 
         return '', 200
@@ -1367,13 +1363,19 @@ def webhook():
         logger.error(f"Webhook error: {e}")
         return '', 500
 
+
 # -----------------------
-# Start Leaderboard Thread
+# Global Pending Actions (for DM trade replies)
+# -----------------------
+pending_actions = {}  # {user_id: {"action": "...", ...}}
+
+# -----------------------
+# Start Leaderboard Thread (Daily Unemployed)
 # -----------------------
 start_leaderboard_thread_once()
 
 # -----------------------
-# Keep-Alive Ping
+# Keep-Alive Ping (Prevents Render/Heroku Sleep)
 # -----------------------
 def keep_alive():
     if not SELF_PING:
@@ -1385,7 +1387,7 @@ def keep_alive():
                 logger.info("Self-ping sent to keep alive.")
             except:
                 pass
-            time.sleep(600)
+            time.sleep(600)  # 10 minutes
     t = threading.Thread(target=ping, daemon=True)
     t.start()
 
