@@ -1112,22 +1112,53 @@ def webhook():
             return '', 200
 
 
-        # === Other Admin Commands ===
         if text_lower.startswith('!unmute '):
+            # Only admins
             if str(user_id) not in ADMIN_IDS:
                 send_system_message(f"> @{sender}: Only admins can use !unmute")
                 return '', 200
-            target_name = text[len('!unmute '):].strip().lstrip('@')
-            target = fuzzy_find_member(target_name)
-            if not target:
-                send_system_message(f"> @{sender}: User not found")
+
+            # If reply -> unmute replied user
+            replied = _find_replied_message(data)
+            if replied and replied.get("user_id"):
+                target_id = str(replied.get("user_id"))
+                target_name = replied.get("name", "User")
+                if target_id in muted_users:
+                    del muted_users[target_id]
+                    send_system_message(f"{target_name} (`{target_id}`) has been unmuted.")
+                else:
+                    send_system_message(f"{target_name} (`{target_id}`) was not muted.")
                 return '', 200
-            target_id, _ = target
+
+            # Non-reply path. Support multi-word names or direct IDs.
+            target_text = text[len('!unmute '):].strip().lstrip('@')
+            if not target_text:
+                send_system_message("> Usage: `!unmute` (reply) **or** `!unmute @User`")
+                return '', 200
+
+            # If admin provided a numeric user_id directly
+            if target_text.isdigit():
+                tid = target_text
+                if tid in muted_users:
+                    del muted_users[tid]
+                    send_system_message(f"User (`{tid}`) has been unmuted.")
+                else:
+                    send_system_message(f"User (`{tid}`) was not muted.")
+                return '', 200
+
+            # Otherwise fuzzy-search the group for the member name
+            target = fuzzy_find_member(target_text)
+            if not target:
+                send_system_message(f"> @{sender}: User **{target_text}** not found")
+                return '', 200
+
+            target_id, target_nick = target
+            target_id = str(target_id)
             if target_id in muted_users:
                 del muted_users[target_id]
-                send_system_message(f"{target_name} has been unmuted.")
+                send_system_message(f"{target_nick} (`{target_id}`) has been unmuted.")
             else:
-                send_system_message(f"{target_name} was not muted.")
+                send_system_message(f"{target_nick} (`{target_id}`) was not muted.")
             return '', 200
 
         if text_lower.startswith('!ban '):
