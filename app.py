@@ -150,6 +150,26 @@ def _initialize_daily_tracking():
 
 _initialize_daily_tracking()
 
+
+def extract_last_number(text: str, default: int = 30) -> int:
+    """
+    Extract the LAST integer from text.
+    Examples:
+      "!mute @grok 5 minutes" → 5
+      "!mute 10" → 10
+      "!mute @grok five" → 30 (default)
+      "!mute @grok -3" → 30 (enforced min 1)
+    """
+    # Find all numbers
+    numbers = re.findall(r'\d+', text)
+    if not numbers:
+        return default
+    try:
+        num = int(numbers[-1])  # last number
+        return max(1, num)  # enforce at least 1 min
+    except:
+        return default
+
 # -----------------------
 # Ban Functions
 # -----------------------
@@ -1034,21 +1054,16 @@ def webhook():
             if replied:
                 target_id = str(replied.get("user_id"))
                 target_nick = replied.get("name", "Unknown")
-                # Optional minutes from command: "!mute 60"
-                minutes = 30
-                try:
-                    if len(text.split()) > 1:
-                        minutes = int(text.split()[1])
-                except ValueError:
-                    minutes = 30
+                # Extract LAST number from entire command text
+                minutes = extract_last_number(text, 30)
             else:
-                # Normal: !mute @User [minutes]
                 parts = text.split()
                 if len(parts) < 2:
-                    send_system_message("> Usage: `!mute` (as reply) **or** `!mute @User [minutes]`")
+                    send_system_message("> Usage: `!mute` (reply) **or** `!mute @User [minutes]`")
                     return '', 200
                 target_name = parts[1].lstrip('@')
-                minutes = int(parts[2]) if len(parts) > 2 else 30
+                # Extract LAST number from entire text (after splitting)
+                minutes = extract_last_number(text, 30)
                 target = fuzzy_find_member(target_name)
                 if not target:
                     send_system_message(f"> @{sender}: User **{target_name}** not found")
