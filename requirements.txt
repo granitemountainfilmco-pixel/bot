@@ -3,3 +3,5 @@ requests
 gunicorn
 fuzzywuzzy
 python-Levenshtein
+nsfw-detector
+Pillow
