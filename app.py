@@ -1322,8 +1322,7 @@ def webhook():
 
             portfolio = {}
             for uid in {nft["owner"] for nft in game_data["nfts"].values()}:
-                value = sum(nft["price"] for nft in game_data["nfts"].values() if nft["owner"] == uid)
-                value += game_data["balances"].get(uid, 0)
+                value = game_data["balances"].get(uid, 0)
                 portfolio[uid] = value
 
             if not portfolio:
