@@ -975,10 +975,10 @@ def webhook():
                     # 1 in 10 chance to say "GAY"
                     if random.randint(1, 10) == 1:
                         send_system_message("GAY")
-                elif 'has joined the group' in text_lower:
-                    send_system_message("Welcome to Clean Memes, check the rules and announcement topics before chatting!")
-                elif 'has rejoined the group' in text_lower:
-                    send_system_message("oh look who's back")
+               # elif 'has joined the group' in text_lower:
+             #       send_system_message("Welcome to Clean Memes, check the rules and announcement topics before chatting!")
+            #    elif 'has rejoined the group' in text_lower:
+           #         send_system_message("oh look who's back")
             return '', 200
         if sender_type not in ['user']:
             return '', 200
