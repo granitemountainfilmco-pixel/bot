@@ -984,23 +984,23 @@ def webhook():
             return '', 200
 
         # === DM REPLY HANDLING (Trade Confirmations) ===
-        if is_dm and user_id in pending_actions:
-            action = pending_actions[user_id]
-            if action["action"] == "trade_accept" and text_lower.strip() == "yes":
-                sender_id = action["sender"]
-                nft_id = action["nft_id"]
-                if nft_id not in game_data["nfts"]:
-                    send_dm(user_id, "Trade failed — NFT no longer exists.")
-                else:
-                    nft = game_data["nfts"][nft_id]
-                    old_owner = nft["owner"]
-                    nft["owner"] = user_id
-                    save_game_data(game_data)
-                    send_message(f"**TRADE COMPLETE**! <@{user_id}> accepted MemeNFT #{nft_id} from <@{sender_id}>!")
-                del pending_actions[user_id]
-                if sender_id in pending_actions:
-                    del pending_actions[sender_id]
-            return '', 200
+#        if is_dm and user_id in pending_actions:
+ #           action = pending_actions[user_id]
+ #           if action["action"] == "trade_accept" and text_lower.strip() == "yes":
+ #               sender_id = action["sender"]
+  #              nft_id = action["nft_id"]
+  #              if nft_id not in game_data["nfts"]:
+  #                  send_dm(user_id, "Trade failed — NFT no longer exists.")
+#                else:
+ #                   nft = game_data["nfts"][nft_id]
+ #                   old_owner = nft["owner"]
+  #                  nft["owner"] = user_id
+ #                   save_game_data(game_data)
+  #                  send_message(f"**TRADE COMPLETE**! <@{user_id}> accepted MemeNFT #{nft_id} from <@{sender_id}>!")
+  ##              del pending_actions[user_id]
+  #              if sender_id in pending_actions:
+  #                  del pending_actions[sender_id]
+ #           return '', 200
 
         # === VIOLATION CHECK (Swear Filter, Mute, Ban) ===
         if user_id and text and message_id:
@@ -1111,7 +1111,24 @@ def webhook():
             save_system_messages_enabled(False)
             send_system_message("System messages **DISABLED** by admin.")
             return '', 200
-            
+
+        if 'clean memes' in text_lower:
+            send_message("We're the best!")
+        elif 'wsg' in text_lower:
+            send_message("God is good")
+        elif '!kill' in text_lower:
+            send_message("Error: Only God himself can use this command")
+        elif 'cooper is my pookie' in text_lower:
+            send_message("me too bro")
+        elif 'wrx is tall' in text_lower:
+            send_message("Wrx considers a chihuahua to be a large dog")
+        elif 'https:' in text and not any(att.get("type") == "video" for att in attachments):
+            send_message("Delete this, links are not allowed, admins have been notified")
+        elif 'france' in text_lower:
+            send_message("please censor that to fr*nce")
+        elif 'french' in text_lower:
+            send_message("please censor that to fr*nch")
+
 
         # === MEME NFT COMMANDS === 
     #    if text_lower.strip() == '!memeupload' and attachments:
@@ -1336,11 +1353,11 @@ def webhook():
    #                  for i, (uid, val) in enumerate(top)]
     #        send_message("**Top Meme Collectors**\n" + "\n".join(lines))
      #       return '', 200
-#
- #       if text_lower.strip() == '!unemployed':
-  #          msg = _build_leaderboard_message()
-   #         send_message(msg)
-    #        return '', 200
+
+       if text_lower.strip() == '!unemployed':
+            msg = _build_leaderboard_message()
+            send_message(msg)
+            return '', 200
 #
  #       if text_lower.strip() == '!balance':
   #          balance = game_data["balances"].get(user_id, 0)
