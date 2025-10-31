@@ -679,9 +679,6 @@ def check_for_violations(text: str, user_id: str, username: str, message_id: str
         if not hasattr(check_for_violations, "_mute_warned"):
             check_for_violations._mute_warned = {}
         if uid not in check_for_violations._mute_warned:
-            send_system_message(
-                f"{username} is **muted** – {minutes_left} minute(s) left. Your messages are being deleted."
-            )
             check_for_violations._mute_warned[uid] = True
         logger.info(f"MUTED MSG DELETED: {username} ({uid}), {minutes_left}m left")
         deleted = True
