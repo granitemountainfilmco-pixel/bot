@@ -176,14 +176,8 @@ def get_user_membership_id(user_id):
         logger.exception(f"Error getting membership ID for {user_id}: {e}")
         return None
 
-# -------------------------------------------------
-# NEW HELPERS – Add after existing helpers
-# -------------------------------------------------
 def _find_replied_message(data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    """
-    GroupMe sends the original message inside `attachments` when a user replies.
-    Returns the replied-to message dict or None.
-    """
+    """GroupMe puts the original message in an attachment of type "reply"."""
     for att in data.get("attachments", []):
         if att.get("type") == "reply":
             return att.get("reply_to") or att
@@ -191,10 +185,7 @@ def _find_replied_message(data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
 
 
 def _delete_message_by_id(msg_id: str) -> bool:
-    """
-    DELETE /conversations/:group_id/messages/:message_id
-    Returns True on 204, False otherwise.
-    """
+    """DELETE /conversations/:group_id/messages/:message_id – correct endpoint."""
     url = f"{GROUPME_API}/conversations/{GROUP_ID}/messages/{msg_id}"
     try:
         r = requests.delete(url, params={"token": ACCESS_TOKEN}, timeout=8)
@@ -649,12 +640,22 @@ def check_for_violations(text: str, user_id: str, username: str, message_id: str
     deleted = False
 
     # === MUTE CHECK: Auto-delete if user is muted ===
+    # === MUTE ENFORCEMENT ===
     if uid in muted_users and now < muted_users[uid]:
         minutes_left = int((muted_users[uid] - now) / 60) + 1
-        if delete_message(message_id):
-            logger.info(f"MUTED MSG DELETED: {username} ({uid}), {minutes_left}m left")
-            deleted = True
-        return deleted  # Skip swear checks
+        # Delete the message using the correct API
+        _delete_message_by_id(message_id)
+        # Warn once per mute (not on every message)
+        if not hasattr(check_for_violations, "_mute_warned"):
+            check_for_violations._mute_warned = {}
+        if uid not in check_for_violations._mute_warned:
+            send_system_message(
+                f"{username} is **muted** – {minutes_left} minute(s) left. Your messages are being deleted."
+            )
+            check_for_violations._mute_warned[uid] = True
+        logger.info(f"MUTED MSG DELETED: {username} ({uid}), {minutes_left}m left")
+        deleted = True
+        return deleted
 
     # === Clean expired mutes ===
     expired = [u for u, until in list(muted_users.items()) if now >= until]
@@ -1096,18 +1097,31 @@ def webhook():
             unban_user(target_name, sender, user_id, text)
             return '', 200
 
-        if text_lower.startswith('!delete '):
+        if text_lower.startswith('!delete'):
             if str(user_id) not in ADMIN_IDS:
-                send_system_message(f"> @{sender}: Only admins can use !delete")
+                send_system_message(f"> @{sender}: {text}\nOnly admins can use !delete")
                 return '', 200
-            try:
-                msg_id = text.split()[1]
-                if delete_message(msg_id):
-                    send_system_message(f"Message {msg_id} deleted by @{sender}.")
+
+            # 1. Delete replied-to message
+            replied = _find_replied_message(data)
+            if replied and replied.get("id"):
+                if _delete_message_by_id(replied["id"]):
+                    send_system_message(f"Message {replied['id']} (replied-to) deleted by @{sender}.")
                 else:
-                    send_system_message(f"Failed to delete message {msg_id}.")
-            except:
-                send_system_message("Usage: `!delete MESSAGE_ID`")
+                    send_system_message(f"Failed to delete replied-to message {replied['id']}.")
+                return '', 200
+
+            # 2. Fallback: explicit ID
+            parts = text.split()
+            if len(parts) < 2:
+                send_system_message("> Usage: `!delete` (reply) **or** `!delete <MESSAGE_ID>`")
+                return '', 200
+
+            msg_id = parts[1]
+            if _delete_message_by_id(msg_id):
+                send_system_message(f"Message {msg_id} deleted by @{sender}.")
+            else:
+                send_system_message(f"Failed to delete message {msg_id}.")
             return '', 200
     
         if text_lower.startswith('!getid '):
