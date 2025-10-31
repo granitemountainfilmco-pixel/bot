@@ -5,3 +5,4 @@ fuzzywuzzy
 python-Levenshtein
 nsfw-detector
 Pillow
+tensorflow-cpu==2.12.0
