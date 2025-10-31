@@ -1113,7 +1113,7 @@ def webhook():
             return '', 200
             
 
-        # === MEME NFT COMMANDS === """
+        # === MEME NFT COMMANDS === 
     #    if text_lower.strip() == '!memeupload' and attachments:
      #      if not image_att:
       #          send_message(f"@{sender} Upload an image with `!memeupload`!")
@@ -1364,7 +1364,7 @@ def webhook():
  #   except Exception as e:
   #      logger.error(f"Webhook error: {e}")
    #     return '', 500
-    #    """
+    #    
 
 # -----------------------
 # Global Pending Actions (for DM trade replies)
