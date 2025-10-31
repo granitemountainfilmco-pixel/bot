@@ -1358,7 +1358,7 @@ def webhook():
             msg = _build_leaderboard_message()
             send_message(msg)
             return '', 200
-#
+
  #       if text_lower.strip() == '!balance':
   #          balance = game_data["balances"].get(user_id, 0)
    #         send_message(f"Your MemeCoin balance: **{balance} Coins**")
@@ -1378,10 +1378,10 @@ def webhook():
 #
  #       return '', 200
 #
- #   except Exception as e:
-  #      logger.error(f"Webhook error: {e}")
-   #     return '', 500
-    #    
+    except Exception as e:
+        logger.error(f"Webhook error: {e}")
+        return '', 500
+        
 
 # -----------------------
 # Global Pending Actions (for DM trade replies)
