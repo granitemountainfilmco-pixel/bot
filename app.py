@@ -197,11 +197,24 @@ def get_user_membership_id(user_id):
         return None
 
 def _find_replied_message(data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    """GroupMe puts the original message in an attachment of type "reply"."""
+    """
+    GroupMe reply attachments look like:
+    {
+        "type": "reply",
+        "reply_id": "<original_message_id>",
+        "user_id": "<sender_id>",
+        "name": "<sender_name>"
+    }
+    """
     for att in data.get("attachments", []):
         if att.get("type") == "reply":
-            return att.get("reply_to") or att
+            return {
+                "message_id": att.get("reply_id") or att.get("id"),
+                "user_id": att.get("user_id"),
+                "name": att.get("name")
+            }
     return None
+
 
 
 def _delete_message_by_id(msg_id: str) -> bool:
@@ -1050,15 +1063,17 @@ def webhook():
                 target_nick = replied.get("name", "Unknown")
                 minutes = extract_last_number(text, 30)
             else:
-                parts = text.split()
-                if len(parts) < 2:
+                args = text.split(maxsplit=1)
+                if len(args) < 2:
                     send_system_message("> Usage: `!mute` (reply) **or** `!mute @User [minutes]`")
                     return '', 200
-                target_name = parts[1].lstrip('@')
+
+                # Support multi-word names before last number
+                target_part = re.sub(r'\d+$', '', args[1]).strip().lstrip('@')
                 minutes = extract_last_number(text, 30)
-                target = fuzzy_find_member(target_name)
+                target = fuzzy_find_member(target_part)
                 if not target:
-                    send_system_message(f"> @{sender}: User **{target_name}** not found")
+                    send_system_message(f"> @{sender}: User **{target_part}** not found")
                     return '', 200
                 target_id, target_nick = target
 
@@ -1070,6 +1085,7 @@ def webhook():
             logger.info(f"Muted {target_nick} ({target_id}) for {minutes}m")
             return '', 200
 
+
         # === !delete ===
         if text_lower.startswith('!delete'):
             if str(user_id) not in ADMIN_IDS:
@@ -1077,11 +1093,11 @@ def webhook():
                 return '', 200
 
             replied = _find_replied_message(data)
-            if replied and replied.get("id"):
-                if _delete_message_by_id(replied["id"]):
-                    send_system_message(f"Message {replied['id']} (replied-to) deleted by @{sender}.")
+            if replied and replied.get("message_id"):
+                if _delete_message_by_id(replied["message_id"]):
+                    send_system_message(f"Message {replied['message_id']} deleted by @{sender}.")
                 else:
-                    send_system_message(f"Failed to delete replied-to message {replied['id']}.")
+                    send_system_message(f"Failed to delete message {replied['message_id']}.")
                 return '', 200
 
             parts = text.split()
@@ -1094,6 +1110,7 @@ def webhook():
             else:
                 send_system_message(f"Failed to delete message {parts[1]}.")
             return '', 200
+
 
         # === Other Admin Commands ===
         if text_lower.startswith('!unmute '):
