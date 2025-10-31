@@ -170,6 +170,17 @@ def extract_last_number(text: str, default: int = 30) -> int:
     except:
         return default
 
+def contains_link_but_no_attachments(text: str, attachments: list) -> bool:
+    """
+    Returns True if the message contains a URL in the text
+    AND the message has NO attachments (so we don't delete memes).
+    """
+    # Quick regex for http(s) URLs
+    if re.search(r'http[s]?://[^\s<>"\']+', text, re.IGNORECASE):
+        # Only act if there are *no* attachments
+        return len(attachments) == 0
+    return False
+
 # -----------------------
 # Ban Functions
 # -----------------------
@@ -1039,7 +1050,6 @@ def webhook():
             return '', 200
 
         # === VIOLATION CHECK (Swear Filter, Mute, Ban) ===
-        # === VIOLATION CHECK (Swear Filter, Mute, Ban) ===
         if user_id and text and message_id:
             # Allow admins to run unmute even if muted
             if text_lower.startswith('!unmute') and str(user_id) in ADMIN_IDS:
@@ -1048,6 +1058,25 @@ def webhook():
                 deleted = check_for_violations(text, user_id, sender, str(message_id))
                 if deleted:
                     return '', 200
+
+        # === DAILY MESSAGE COUNT ===
+        if user_id and text:
+            increment_user_message_count(user_id, sender, text)
+
+        # === DELETE LINKS IN TEXT (non-admins only, no attachments) ===
+        if user_id and text and message_id:
+            if str(user_id) not in ADMIN_IDS:  # Admins are exempt
+                if contains_link_no_attachments(text, attachments):
+                    _delete_message_by_id(str(message_id))
+                    send_system_message(
+                        f"@{sender}, links in text are not allowed. "
+                        "Your message was deleted. Use image/video upload instead."
+                    )
+                    return '', 200
+
+        # === !mute ===
+        if text_lower.startswith('!mute'):
+            # ... rest of your code
 
 
         # === DAILY MESSAGE COUNT ===
