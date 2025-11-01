@@ -1030,7 +1030,8 @@ def webhook():
         sender = data.get('name', 'Someone')
         user_id = str(data.get('user_id')) if data.get('user_id') is not None else None
         message_id = data.get('id')
-        text_lower = text.lower().lstrip()  # ← FIXED: .lstrip()
+        text_lower = text.lower()
+        command = text_lower.split()[0] if text_lower else ""
         attachments = data.get("attachments", [])
         is_dm = 'group_id' not in data or not data['group_id']
 
