@@ -1075,10 +1075,6 @@ def webhook():
                     )
                     return '', 200
 
-        # === !mute ===
-        if text_lower.startswith('!mute'):
-            # ... rest of your code
-
 
         # === DAILY MESSAGE COUNT ===
         if user_id and text:
