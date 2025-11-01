@@ -33,7 +33,7 @@ JSONBIN_BIN_ID = os.getenv("JSONBIN_BIN_ID")
 
 # Swear word categories
 INSTANT_BAN_WORDS = [
-    'nigger', 'nigga', 'n1gger', 'n1gga', 'nigg', 'n1gg', 'nigha',
+    'nigger', 'nigga', 'n1gger', 'n1gga', 'nigg', 'n1gg', 'nigha семь',
 ]
 REGULAR_SWEAR_WORDS = [
     'fuck', 'fucking', 'fucked', 'fucker',
@@ -160,24 +160,17 @@ def extract_last_number(text: str, default: int = 30) -> int:
       "!mute @grok five" → 30 (default)
       "!mute @grok -3" → 30 (enforced min 1)
     """
-    # Find all numbers
     numbers = re.findall(r'\d+', text)
     if not numbers:
         return default
     try:
-        num = int(numbers[-1])  # last number
-        return max(1, num)  # enforce at least 1 min
+        num = int(numbers[-1])
+        return max(1, num)
     except:
         return default
 
 def contains_link_but_no_attachments(text: str, attachments: list) -> bool:
-    """
-    Returns True if the message contains a URL in the text
-    AND the message has NO attachments (so we don't delete memes).
-    """
-    # Quick regex for http(s) URLs
     if re.search(r'http[s]?://[^\s<>"\']+', text, re.IGNORECASE):
-        # Only act if there are *no* attachments
         return len(attachments) == 0
     return False
 
@@ -208,15 +201,6 @@ def get_user_membership_id(user_id):
         return None
 
 def _find_replied_message(data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    """
-    GroupMe reply attachments look like:
-    {
-        "type": "reply",
-        "reply_id": "<original_message_id>",
-        "user_id": "<sender_id>",
-        "name": "<sender_name>"
-    }
-    """
     for att in data.get("attachments", []):
         if att.get("type") == "reply":
             return {
@@ -226,10 +210,7 @@ def _find_replied_message(data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
             }
     return None
 
-
-
 def _delete_message_by_id(msg_id: str) -> bool:
-    """DELETE /conversations/:group_id/messages/:message_id – correct endpoint."""
     url = f"{GROUPME_API}/conversations/{GROUP_ID}/messages/{msg_id}"
     try:
         r = requests.delete(url, params={"token": ACCESS_TOKEN}, timeout=8)
@@ -273,18 +254,15 @@ def call_ban_service(user_id: str, username: str, reason: str) -> bool:
 # DAILY 100 COIN INFLATION — EVERY 24 HOURS
 # -------------------------------------------------
 def daily_coin_inflation_worker():
-    """Runs every 24 hours: +100 coins to every player with a balance."""
     logger.info("Daily inflation thread started.")
     while True:
         try:
-            # Wait until next 12:00 AM UTC (or any time you prefer)
             now = datetime.utcnow()
             next_run = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
             sleep_seconds = (next_run - now).total_seconds()
             if sleep_seconds > 0:
                 time.sleep(sleep_seconds)
 
-            # === GIVE 100 COINS TO EVERYONE ===
             if "balances" not in game_data:
                 game_data["balances"] = {}
             
@@ -293,7 +271,6 @@ def daily_coin_inflation_worker():
                 game_data["balances"][uid] += 100
                 affected += 1
 
-            # Also give to anyone who has ever minted (even if balance was 0)
             for uid in game_data.get("has_minted", set()):
                 uid = str(uid)
                 game_data["balances"][uid] = game_data["balances"].get(uid, 0) + 100
@@ -301,15 +278,12 @@ def daily_coin_inflation_worker():
 
             save_game_data(game_data)
             logger.info(f"Daily inflation: +100 coins to {affected} players.")
-            
-            # Optional: Announce in group
             send_message("**DAILY DROP** — Everyone gets **+100 MemeCoins**! Check `!balance`")
 
         except Exception as e:
             logger.error(f"Inflation worker error: {e}")
-            time.sleep(3600)  # Wait 1h on error
+            time.sleep(3600)
 
-# Start the thread
 inflation_thread = threading.Thread(target=daily_coin_inflation_worker, daemon=True)
 inflation_thread.start()
 
@@ -400,77 +374,100 @@ def google_search(query: str) -> str:
         return f"Search failed—{e.__class__.__name__}: {e}"
 
 # -----------------------
-# Fuzzy Member Search
+# SMART USER RESOLUTION
+# -----------------------
+def resolve_target_user(data: Dict, command_text: str) -> Optional[Tuple[str, str]]:
+    """
+    Resolves target user with priority:
+    1. Reply attachment
+    2. @-mention in text (via attachment)
+    3. Fuzzy name from remaining text
+    Returns (user_id, nickname) or None
+    """
+    text = command_text or ""
+    attachments = data.get("attachments", [])
+
+    # 1. REPLY
+    replied = _find_replied_message(data)
+    if replied and replied.get("user_id"):
+        uid = str(replied["user_id"])
+        name = replied.get("name", "Unknown")
+        logger.info(f"Target resolved via reply: {name} ({uid})")
+        return uid, name
+
+    # 2. @-MENTION
+    for att in attachments:
+        if att.get("type") == "mentions":
+            loci = att.get("loci", [])
+            user_ids = att.get("user_ids", [])
+            if user_ids and loci:
+                uid = str(user_ids[0])
+                start, length = loci[0]
+                mentioned_text = text[start:start+length].lstrip('@').strip()
+                members = get_group_members()
+                for m in members:
+                    if str(m.get("user_id")) == uid:
+                        return uid, m.get("nickname") or mentioned_text
+                return uid, mentioned_text
+
+    # 3. FUZZY FALLBACK
+    prefix_map = {
+        '!mute ': 6, '!ban ': 5, '!unban ': 7, '!getid ': 7,
+        '!strike ': 8, '!strikes ': 9
+    }
+    cut = 0
+    for prefix, length in prefix_map.items():
+        if text.lower().startswith(prefix):
+            cut = length
+            break
+    remainder = text[cut:].strip()
+    remainder = re.sub(r'\s+\d+$', '', remainder).strip()
+    target_name = remainder.lstrip('@').strip()
+    if not target_name:
+        return None
+
+    result = fuzzy_find_member(target_name)
+    if result:
+        uid, nick = result
+        logger.info(f"Target resolved via fuzzy: {nick} ({uid})")
+        return uid, nick
+
+    logger.warning(f"Could not resolve target: '{target_name}'")
+    return None
+
+# -----------------------
+# Fuzzy Member Search (Tightened)
 # -----------------------
 def fuzzy_find_member(target_alias: str) -> Optional[Tuple[str, str]]:
     if not target_alias or len(target_alias.strip()) < 2:
         return None
-    target_clean = target_alias.strip().lower()
-    target_words = target_clean.split()
-    target_length = len(target_clean)
-
-    def contains_all_words(nickname: str, target_words: List[str]) -> bool:
-        nick_words = nickname.lower().split()
-        return all(word in nick_words for word in target_words)
-
-    if target_alias.isdigit():
-        members = get_group_members()
-        for m in members:
-            if str(m.get("user_id")) == target_alias:
-                return (str(m.get("user_id")), m.get("nickname") or "Unknown")
-        if target_alias in former_members:
-            return (str(target_alias), former_members[target_alias])
-        if target_alias in banned_users:
-            return (str(target_alias), banned_users[target_alias])
+    target_clean = target_alias.strip()
+    if target_clean.startswith('@'):
+        target_clean = target_clean[1:]
 
     members = get_group_members()
-    nicknames = [m.get("nickname", "") for m in members if m.get("nickname")]
+    # Exact match first
     for m in members:
         nick = m.get("nickname", "")
-        if nick.lower() == target_clean:
-            return (str(m.get("user_id")), nick or "Unknown")
+        if nick and nick.lower() == target_clean.lower():
+            return (str(m.get("user_id")), nick)
 
-    nick_lower_list = [n.lower() for n in nicknames if n]
-    if nick_lower_list:
-        match = process.extractOne(target_clean, nick_lower_list, score_cutoff=90, scorer=fuzz.token_sort_ratio)
-        if match:
-            matched_lower, score = match
-            index = nick_lower_list.index(matched_lower)
-            matched_nickname = nicknames[index]
-            matched_length = len(matched_nickname)
-            length_ratio = min(matched_length, target_length) / max(matched_length, target_length)
-            if (contains_all_words(matched_nickname, target_words) and
-                    (length_ratio >= 0.7 or score >= 95)):
-                for m in members:
-                    if m.get("nickname", "").lower() == matched_lower:
-                        return (str(m.get("user_id")), m.get("nickname") or "Unknown")
+    # High-score fuzzy
+    nicknames = [m.get("nickname", "") for m in members if m.get("nickname")]
+    if not nicknames:
+        return None
+    nick_lower = [n.lower() for n in nicknames]
+    match = process.extractOne(target_clean, nick_lower, score_cutoff=92, scorer=fuzz.token_sort_ratio)
+    if match:
+        matched_lower, score = match
+        idx = nick_lower.index(matched_lower)
+        return (str(members[idx].get("user_id")), nicknames[idx])
 
+    # Former members
     for uid, nick in former_members.items():
-        if nick.lower() == target_clean:
+        if nick.lower() == target_clean.lower():
             return (str(uid), nick)
 
-    if former_members:
-        former_nicks = list(former_members.values())
-        former_lower = [n.lower() for n in former_nicks]
-        match = process.extractOne(target_clean, former_lower, score_cutoff=90, scorer=fuzz.token_sort_ratio)
-        if match:
-            matched_lower, score = match
-            index = former_lower.index(matched_lower)
-            matched_nickname = former_nicks[index]
-            matched_length = len(matched_nickname)
-            length_ratio = min(matched_length, target_length) / max(matched_length, target_length)
-            if (contains_all_words(matched_nickname, target_words) and
-                    (length_ratio >= 0.7 or score >= 95)):
-                for k, v in former_members.items():
-                    if v.lower() == matched_lower:
-                        return (str(k), v)
-
-    for uid, uname in banned_users.items():
-        if target_clean in uname.lower() or target_clean == uid:
-            return (str(uid), uname)
-
-    if len(target_words) > 1:
-        return None
     return None
 
 # -----------------------
@@ -480,9 +477,6 @@ def get_user_id(target_alias: str, sender_name: str, sender_id: str, original_te
     if str(sender_id) not in ADMIN_IDS:
         send_system_message(f"> @{sender_name}: {original_text}\nError: Only admins can use this command")
         return False
-    if not ACCESS_TOKEN or not GROUP_ID:
-        send_system_message(f"> @{sender_name}: {original_text}\nError: Missing ACCESS_TOKEN or GROUP_ID")
-        return False
     result = fuzzy_find_member(target_alias)
     if not result:
         send_system_message(f"> @{sender_name}: {original_text}\nNo user found matching '{target_alias}'")
@@ -491,7 +485,10 @@ def get_user_id(target_alias: str, sender_name: str, sender_id: str, original_te
     send_system_message(f"> @{sender_name}: {original_text}\n{nickname}'s user_id is {user_id}")
     return True
 
-def unban_user(target_alias: str, sender: str, sender_id: str, full_text: str) -> None:
+def unban_user(target_user_id: str, sender: str, sender_id: str, full_text: str) -> None:
+    """
+    Now accepts user_id directly (no fuzzy lookup)
+    """
     try:
         if str(sender_id) not in ADMIN_IDS:
             send_system_message(f"> @{sender}: {full_text}\nError: Only admins can use this command")
@@ -499,24 +496,15 @@ def unban_user(target_alias: str, sender: str, sender_id: str, full_text: str) -
         if not ACCESS_TOKEN or not GROUP_ID:
             send_system_message(f"> @{sender}: {full_text}\nError: Missing ACCESS_TOKEN or GROUP_ID")
             return
-        match_user_id = None
-        match_nickname = None
-        fuzzy_result = fuzzy_find_member(target_alias)
-        if fuzzy_result:
-            match_user_id, match_nickname = fuzzy_result
-        if not match_user_id:
-            for uid, uname in banned_users.items():
-                if target_alias.lower() in uname.lower() or str(uid) == target_alias:
-                    match_user_id = str(uid)
-                    match_nickname = uname
-                    break
-        if not match_user_id:
-            send_system_message(f"> @{sender}: {full_text}\nNo record of '{target_alias}' in banned list or group members.")
+
+        match_user_id = str(target_user_id)
+        match_nickname = banned_users.get(match_user_id, "Member")
+        if match_user_id not in banned_users and match_user_id not in former_members:
+            send_system_message(f"> @{sender}: {full_text}\nNo record of user `{match_user_id}` in banned/former list.")
             return
-        nickname = match_nickname or "Member"
-        match_user_id = str(match_user_id)
-        safe_name = re.sub(r"[^A-Za-z0-9 _\\-]", "", nickname)[:30] or "User"
-        logger.info(f"Attempting to unban {nickname} ({match_user_id})")
+
+        safe_name = re.sub(r"[^A-Za-z0-9 _\\-]", "", match_nickname)[:30] or "User"
+        logger.info(f"Attempting to unban {match_nickname} ({match_user_id})")
 
         def attempt_add(nick_to_add: str) -> Tuple[bool, int]:
             payload = {"members": [{"nickname": nick_to_add, "user_id": match_user_id}]}
@@ -574,7 +562,7 @@ def unban_user(target_alias: str, sender: str, sender_id: str, full_text: str) -
 
         success, status_code = attempt_add(safe_name)
         if success:
-            send_system_message(f"> @{sender}: {full_text}\n{nickname} re-added to the group.")
+            send_system_message(f"> @{sender}: {full_text}\n{match_nickname} re-added to the group.")
             banned_users.pop(match_user_id, None)
             save_json(banned_users_file, banned_users)
             user_swear_counts.pop(match_user_id, None)
@@ -587,7 +575,7 @@ def unban_user(target_alias: str, sender: str, sender_id: str, full_text: str) -
         time.sleep(6)
         members_after = get_group_members()
         if any(str(m.get("user_id")) == match_user_id for m in members_after):
-            send_system_message(f"> @{sender}: {full_text}\n{nickname} re-added to the group.")
+            send_system_message(f"> @{sender}: {full_text}\n{match_nickname} re-added to the group.")
             banned_users.pop(match_user_id, None)
             save_json(banned_users_file, banned_users)
             user_swear_counts.pop(match_user_id, None)
@@ -613,26 +601,21 @@ def unban_user(target_alias: str, sender: str, sender_id: str, full_text: str) -
             return
         share_url = get_group_share_url()
         error_msg = f"GroupMe sync delay, cooldown, or API failure (code {status_code})"
-        fallback_msg = f"Could not re-add {nickname}. {error_msg}. "
+        fallback_msg = f"Could not re-add {match_nickname}. {error_msg}. "
         if share_url:
             fallback_msg += f"Send them: {share_url}"
         send_system_message(f"> @{sender}: {full_text}\n{fallback_msg}")
     except Exception as e:
         logger.error(f"unban_user error: {e}")
-        send_system_message(f"> @{sender}: {full_text}\nError unbanning '{target_alias}': {str(e)}")
+        send_system_message(f"> @{sender}: {full_text}\nError unbanning user `{target_user_id}': {str(e)}")
 
-def ban_user_command(target_alias: str, sender_name: str, sender_id: str, original_text: str) -> bool:
+def ban_user_command(target_user_id: str, target_username: str, sender_name: str, sender_id: str, original_text: str) -> bool:
     if str(sender_id) not in ADMIN_IDS:
         send_system_message(f"> @{sender_name}: {original_text}\nError: Only admins can use this command")
         return False
     if not ACCESS_TOKEN or not GROUP_ID:
         send_system_message(f"> @{sender_name}: {original_text}\nError: Missing ACCESS_TOKEN or GROUP_ID")
         return False
-    result = fuzzy_find_member(target_alias)
-    if not result:
-        send_system_message(f"> @{sender_name}: {original_text}\nNo user found matching '{target_alias}'")
-        return False
-    target_user_id, target_username = result
     success = call_ban_service(target_user_id, target_username, "Admin ban command")
     if success:
         send_system_message(f"> @{sender_name}: {original_text}\n{target_username} has been permanently banned by admin command.")
@@ -640,69 +623,48 @@ def ban_user_command(target_alias: str, sender_name: str, sender_id: str, origin
         send_system_message(f"> @{sender_name}: {original_text}\nError: Failed to ban {target_username}")
     return success
 
-def record_strike(target_alias: str, admin_name: str, admin_id: str, original_text: str) -> None:
+def record_strike(target_user_id: str, target_nickname: str, admin_name: str, admin_id: str, original_text: str) -> None:
     if str(admin_id) not in ADMIN_IDS:
         send_system_message(f"> @{admin_name}: {original_text}\nError: Only admins can issue 'strike' commands.")
         return
-    result = fuzzy_find_member(target_alias)
-    if not result:
-        send_system_message(f"> @{admin_name}: {original_text}\nNo user found matching '{target_alias}'.")
-        return
-    user_id, nickname = result
-    user_id = str(user_id)
+    user_id = str(target_user_id)
     if user_id not in user_strikes:
         user_strikes[user_id] = 0
     user_strikes[user_id] += 1
     save_json(strikes_file, user_strikes)
     count = user_strikes[user_id]
-    logger.info(f"Recorded strike for {nickname} ({user_id}) — total strikes: {count}")
-    send_system_message(f"> @{admin_name}: {original_text}\nStrike recorded for {nickname} ({user_id}). Total strikes: {count}")
+    logger.info(f"Recorded strike for {target_nickname} ({user_id}) — total strikes: {count}")
+    send_system_message(f"> @{admin_name}: {original_text}\nStrike recorded for {target_nickname} ({user_id}). Total strikes: {count}")
 
-def get_strikes_report(target_alias: str, requester_name: str, requester_id: str, original_text: str) -> None:
+def get_strikes_report(target_user_id: str, target_nickname: str, requester_name: str, requester_id: str, original_text: str) -> None:
     if str(requester_id) not in ADMIN_IDS:
         send_system_message(f"> @{requester_name}: {original_text}\nError: Only admins can use '!strikes' command.")
         return
-    result = fuzzy_find_member(target_alias)
-    if not result:
-        send_system_message(f"> @{requester_name}: {original_text}\nNo user found matching '{target_alias}'.")
-        return
-    user_id, nickname = result
-    user_id = str(user_id)
+    user_id = str(target_user_id)
     count = int(user_strikes.get(user_id, 0))
-    send_system_message(f"> @{requester_name}: {original_text}\n{nickname} ({user_id}) has {count} strike(s).")
+    send_system_message(f"> @{requester_name}: {original_text}\n{target_nickname} ({user_id}) has {count} strike(s).")
 
 # -----------------------
 # Violation Detection with Deletion
 # -----------------------
 def check_for_violations(text: str, user_id: str, username: str, message_id: str) -> bool:
-    """
-    Check for muted users first, then swears/instant bans.
-    Deletes message + sends warning if muted or violation.
-    """
     uid = str(user_id)
     now = time.time()
     deleted = False
 
-    # === MUTE CHECK: Auto-delete if user is muted ===
     if uid in muted_users and now < muted_users[uid]:
         minutes_left = int((muted_users[uid] - now) / 60) + 1
         _delete_message_by_id(message_id)
-        if not hasattr(check_for_violations, "_mute_warned"):
-            check_for_violations._mute_warned = {}
-        if uid not in check_for_violations._mute_warned:
-            check_for_violations._mute_warned[uid] = True
         logger.info(f"MUTED MSG DELETED: {username} ({uid}), {minutes_left}m left")
         deleted = True
         return deleted
 
-    # === Clean expired mutes ===
     expired = [u for u, until in list(muted_users.items()) if now >= until]
     for u in expired:
         del muted_users[u]
     if expired:
         logger.info(f"Cleaned {len(expired)} expired mutes")
 
-    # === Instant Ban Words ===
     text_lower = text.lower()
     text_words = text_lower.split()
     for word in text_words:
@@ -716,7 +678,6 @@ def check_for_violations(text: str, user_id: str, username: str, message_id: str
             deleted = True
             return True
 
-    # === Regular Swear Words (Strike System) ===
     for word in text_words:
         clean_word = word.strip('.,!?"\'()[]{}').lower()
         if clean_word in REGULAR_SWEAR_WORDS:
@@ -726,9 +687,7 @@ def check_for_violations(text: str, user_id: str, username: str, message_id: str
             save_json(user_swear_counts_file, user_swear_counts)
             current_count = user_swear_counts[uid]
             logger.info(f"{username} swear count: {current_count}/10 (msg {message_id})")
-            
             _delete_message_by_id(message_id)
-            
             if current_count >= 10:
                 success = call_ban_service(uid, username, f"10 strikes - swear words")
                 if success:
@@ -741,8 +700,7 @@ def check_for_violations(text: str, user_id: str, username: str, message_id: str
                 remaining = 10 - current_count
                 send_system_message(f"{username} ({uid}) - Warning {current_count}/10 for inappropriate language. {remaining} more and you're banned! (Message deleted)")
             deleted = True
-            break  # Only one swear per message
-
+            break
     return deleted
 
 # -----------------------
@@ -999,11 +957,11 @@ def rarity_update_worker():
             now = time.time()
             updated = False
             for nft_id, info in list(game_data["pending_rarity"].items()):
-                if now - info["mint_time"] >= 86400:  # 24 hours
+                if now - info["mint_time"] >= 86400:
                     likes = get_message_likes(info["message_id"])
-                    rarity = min(10, max(1, likes // 2 + 1))  # e.g., 0 likes =1, 2=2, 20+=10
+                    rarity = min(10, max(1, likes // 2 + 1))
                     game_data["nfts"][nft_id]["rarity"] = rarity
-                    game_data["nfts"][nft_id]["price"] = rarity * 50  # Update price
+                    game_data["nfts"][nft_id]["price"] = rarity * 50
                     send_dm(game_data["nfts"][nft_id]["owner"], f"Your MemeNFT #{nft_id} rarity updated to {rarity} based on {likes} likes!")
                     del game_data["pending_rarity"][nft_id]
                     updated = True
@@ -1011,16 +969,15 @@ def rarity_update_worker():
                 save_game_data(game_data)
         except Exception as e:
             logger.error(f"Rarity worker error: {e}")
-        time.sleep(3600)  # Check hourly
+        time.sleep(3600)
 
-# Start Thread
 t_rarity = threading.Thread(target=rarity_update_worker, daemon=True)
 t_rarity.start()
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
     try:
-        global system_messages_enabled, game_data, next_nft_id, pending_actions
+        global system_messages_enabled, game_data, next_nft_id
         data = request.get_json()
         if not data:
             return '', 200
@@ -1031,28 +988,24 @@ def webhook():
         user_id = str(data.get('user_id')) if data.get('user_id') is not None else None
         message_id = data.get('id')
         text_lower = text.lower()
-        command = text_lower.split()[0] if text_lower else ""
         attachments = data.get("attachments", [])
         is_dm = 'group_id' not in data or not data['group_id']
 
-        # === SYSTEM MESSAGES (Join / Leave / Ban) ===
+        # SYSTEM MESSAGES
         if sender_type == "system" or is_system_message(data):
             if is_real_system_event(text_lower):
                 if 'has left the group' in text_lower or 'was removed from the group' in text_lower:
                     key = user_id or f"ghost-{sender}"
                     former_members[str(key)] = sender
                     save_json(former_members_file, former_members)
-
-                    # 1 in 10 chance to say "GAY"
                     if random.randint(1, 10) == 1:
                         send_system_message("GAY")
             return '', 200
         if sender_type not in ['user']:
             return '', 200
 
-        # === VIOLATION CHECK (Swear Filter, Mute, Ban) ===
+        # VIOLATION CHECK
         if user_id and text and message_id:
-            # Allow admins to run unmute even if muted
             if text_lower.startswith('!unmute') and str(user_id) in ADMIN_IDS:
                 pass
             else:
@@ -1060,25 +1013,17 @@ def webhook():
                 if deleted:
                     return '', 200
 
-        # === DAILY MESSAGE COUNT ===
+        # DAILY COUNT
         if user_id and text:
             increment_user_message_count(user_id, sender, text)
 
-        # === DELETE LINKS IN TEXT (non-admins only, no attachments) ===
+        # LINK DELETION
         if user_id and text and message_id:
-            if str(user_id) not in ADMIN_IDS:  # Admins are exempt
+            if str(user_id) not in ADMIN_IDS:
                 if contains_link_but_no_attachments(text, attachments):
                     _delete_message_by_id(str(message_id))
-                    send_system_message(
-                        f"@{sender}, links in text are not allowed. "
-                        "Your message was deleted. Use image/video upload instead."
-                    )
+                    send_system_message(f"@{sender}, links in text are not allowed. Your message was deleted. Use image/video upload instead.")
                     return '', 200
-
-
-        # === DAILY MESSAGE COUNT ===
-        if user_id and text:
-            increment_user_message_count(user_id, sender, text)
 
         # === !mute ===
         if text_lower.startswith('!mute'):
@@ -1086,34 +1031,18 @@ def webhook():
                 send_system_message(f"> @{sender}: {text}\nOnly admins can use !mute")
                 return '', 200
 
-            replied = _find_replied_message(data)
-            if replied:
-                target_id = str(replied.get("user_id"))
-                target_nick = replied.get("name", "Unknown")
-                minutes = extract_last_number(text, 30)
-            else:
-                args = text.split(maxsplit=1)
-                if len(args) < 2:
-                    send_system_message("> Usage: `!mute` (reply) **or** `!mute @User [minutes]`")
-                    return '', 200
+            target = resolve_target_user(data, text)
+            if not target:
+                send_system_message("> Error: Could not find user. Reply to their message, @-mention them, or use exact name.")
+                return '', 200
 
-                # Support multi-word names before last number
-                target_part = re.sub(r'\d+$', '', args[1]).strip().lstrip('@')
-                minutes = extract_last_number(text, 30)
-                target = fuzzy_find_member(target_part)
-                if not target:
-                    send_system_message(f"> @{sender}: User **{target_part}** not found")
-                    return '', 200
-                target_id, target_nick = target
-
+            target_id, target_nick = target
+            minutes = extract_last_number(text, 30)
             muted_until = time.time() + minutes * 60
             muted_users[target_id] = muted_until
-            send_system_message(
-                f"{target_nick} (`{target_id}`) has been **muted** for **{minutes}** minute(s)."
-            )
+            send_system_message(f"{target_nick} (`{target_id}`) has been **muted** for **{minutes}** minute(s).")
             logger.info(f"Muted {target_nick} ({target_id}) for {minutes}m")
             return '', 200
-
 
         # === !delete ===
         if text_lower.startswith('!delete'):
@@ -1140,49 +1069,18 @@ def webhook():
                 send_system_message(f"Failed to delete message {parts[1]}.")
             return '', 200
 
-
+        # === !unmute ===
         if text_lower.startswith('!unmute '):
-            # Only admins
             if str(user_id) not in ADMIN_IDS:
                 send_system_message(f"> @{sender}: Only admins can use !unmute")
                 return '', 200
 
-            # If reply -> unmute replied user
-            replied = _find_replied_message(data)
-            if replied and replied.get("user_id"):
-                target_id = str(replied.get("user_id"))
-                target_name = replied.get("name", "User")
-                if target_id in muted_users:
-                    del muted_users[target_id]
-                    send_system_message(f"{target_name} (`{target_id}`) has been unmuted.")
-                else:
-                    send_system_message(f"{target_name} (`{target_id}`) was not muted.")
-                return '', 200
-
-            # Non-reply path. Support multi-word names or direct IDs.
-            target_text = text[len('!unmute '):].strip().lstrip('@')
-            if not target_text:
-                send_system_message("> Usage: `!unmute` (reply) **or** `!unmute @User`")
-                return '', 200
-
-            # If admin provided a numeric user_id directly
-            if target_text.isdigit():
-                tid = target_text
-                if tid in muted_users:
-                    del muted_users[tid]
-                    send_system_message(f"User (`{tid}`) has been unmuted.")
-                else:
-                    send_system_message(f"User (`{tid}`) was not muted.")
-                return '', 200
-
-            # Otherwise fuzzy-search the group for the member name
-            target = fuzzy_find_member(target_text)
+            target = resolve_target_user(data, text)
             if not target:
-                send_system_message(f"> @{sender}: User **{target_text}** not found")
+                send_system_message("> Error: Could not find user. Reply, @-mention, or use exact name.")
                 return '', 200
 
             target_id, target_nick = target
-            target_id = str(target_id)
             if target_id in muted_users:
                 del muted_users[target_id]
                 send_system_message(f"{target_nick} (`{target_id}`) has been unmuted.")
@@ -1190,66 +1088,91 @@ def webhook():
                 send_system_message(f"{target_nick} (`{target_id}`) was not muted.")
             return '', 200
 
+        # === !ban ===
         if text_lower.startswith('!ban '):
             if str(user_id) not in ADMIN_IDS:
                 send_system_message(f"> @{sender}: Only admins can use !ban")
                 return '', 200
-            target_name = text[len('!ban '):].strip().lstrip('@')
-            ban_user_command(target_name, sender, user_id, text)
+
+            target = resolve_target_user(data, text)
+            if not target:
+                send_system_message("> Error: Could not find user to ban. Reply, @-mention, or use exact name.")
+                return '', 200
+
+            target_id, target_nick = target
+            ban_user_command(target_id, target_nick, sender, user_id, text)
             return '', 200
 
+        # === !unban ===
         if text_lower.startswith('!unban '):
             if str(user_id) not in ADMIN_IDS:
                 send_system_message(f"> @{sender}: Only admins can use !unban")
                 return '', 200
-            target_name = text[len('!unban '):].strip().lstrip('@')
-            unban_user(target_name, sender, user_id, text)
+
+            target = resolve_target_user(data, text)
+            if not target:
+                send_system_message("> Error: Could not find user to unban. Use @-mention or exact name.")
+                return '', 200
+
+            target_id, _ = target
+            unban_user(target_id, sender, user_id, text)
             return '', 200
 
+        # === !getid ===
         if text_lower.startswith('!getid '):
             target_name = text[len('!getid '):].strip().lstrip('@')
             get_user_id(target_name, sender, user_id, text)
             return '', 200
 
+        # === !strike ===
         if text_lower.startswith('!strike '):
             if str(user_id) not in ADMIN_IDS:
                 send_system_message(f"> @{sender}: Only admins can issue strikes")
                 return '', 200
-            target_name = text[len('!strike '):].strip().lstrip('@')
-            record_strike(target_name, sender, user_id, text)
+
+            target = resolve_target_user(data, text)
+            if not target:
+                send_system_message("> Error: Could not find user. Reply, @-mention, or use exact name.")
+                return '', 200
+
+            target_id, target_nick = target
+            record_strike(target_id, target_nick, sender, user_id, text)
             return '', 200
 
-                # === !google (or !g) – Wikipedia quick-search ===
+        # === !strikes ===
+        if text_lower.startswith('!strikes '):
+            if str(user_id) not in ADMIN_IDS:
+                send_system_message(f"> @{sender}: Only admins can view strikes")
+                return '', 200
+
+            target = resolve_target_user(data, text)
+            if not target:
+                send_system_message("> Error: Could not find user. Reply, @-mention, or use exact name.")
+                return '', 200
+
+            target_id, target_nick = target
+            get_strikes_report(target_id, target_nick, sender, user_id, text)
+            return '', 200
+
+        # === !google / !g ===
         if text_lower.startswith('!google ') or text_lower.startswith('!g '):
-            # Accept both "!google cats" and "!g cats"
             prefix = '!google ' if text_lower.startswith('!google ') else '!g '
             query = text[len(prefix):].strip()
             if not query:
                 send_message("> Usage: `!google <search term>`  or  `!g <search term>`")
                 return '', 200
-
-            # Run the Wikipedia helper you already defined
             answer = google_search(query)
-
-            # Quote the request so the bot can be mentioned in replies
             send_message(f"> @{sender}: {answer}")
             return '', 200
 
-        if text_lower.startswith('!strikes '):
-            if str(user_id) not in ADMIN_IDS:
-                send_system_message(f"> @{sender}: Only admins can view strikes")
-                return '', 200
-            target_name = text[len('!strikes '):].strip().lstrip('@')
-            get_strikes_report(target_name, sender, user_id, text)
-            return '', 200
-
-        if text_lower == '!system on' and str(user_id) in ADMIN_IDS:
+        # === System Toggle ===
+        if text_lower == '!enable' and str(user_id) in ADMIN_IDS:
             system_messages_enabled = True
             save_system_messages_enabled(True)
             send_system_message("System messages **ENABLED** by admin.")
             return '', 200
 
-        if text_lower == '!system off' and str(user_id) in ADMIN_IDS:
+        if text_lower == '!disable' and str(user_id) in ADMIN_IDS:
             system_messages_enabled = False
             save_system_messages_enabled(False)
             send_system_message("System messages **DISABLED** by admin.")
@@ -1285,17 +1208,12 @@ def webhook():
         return '', 500
 
 # -----------------------
-# Global Pending Actions (for DM trade replies)
-# -----------------------
-pending_actions = {}  # {user_id: {"action": "...", ...}}
-
-# -----------------------
-# Start Leaderboard Thread (Daily Unemployed)
+# Start Leaderboard Thread
 # -----------------------
 start_leaderboard_thread_once()
 
 # -----------------------
-# Keep-Alive Ping (Prevents Render/Heroku Sleep)
+# Keep-Alive Ping
 # -----------------------
 def keep_alive():
     if not SELF_PING:
@@ -1307,7 +1225,7 @@ def keep_alive():
                 logger.info("Self-ping sent to keep alive.")
             except:
                 pass
-            time.sleep(600)  # 10 minutes
+            time.sleep(600)
     t = threading.Thread(target=ping, daemon=True)
     t.start()
 
