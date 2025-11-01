@@ -1067,7 +1067,7 @@ def webhook():
         # === DELETE LINKS IN TEXT (non-admins only, no attachments) ===
         if user_id and text and message_id:
             if str(user_id) not in ADMIN_IDS:  # Admins are exempt
-                if contains_link_no_attachments(text, attachments):
+                if contains_link_but_no_attachments(text, attachments):
                     _delete_message_by_id(str(message_id))
                     send_system_message(
                         f"@{sender}, links in text are not allowed. "
