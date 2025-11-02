@@ -413,7 +413,7 @@ def resolve_target_user(data: Dict, command_text: str) -> Optional[Tuple[str, st
     # 3. FUZZY FALLBACK
     prefix_map = {
         '!mute ': 6, '!ban ': 5, '!unban ': 7, '!getid ': 7,
-        '!strike ': 8, '!strikes ': 9
+        '!strike ': 8, '!strikes ': 9, '!unmute': 8
     }
     cut = 0
     for prefix, length in prefix_map.items():
