@@ -1044,6 +1044,51 @@ def webhook():
             logger.info(f"Muted {target_nick} ({target_id}) for {minutes}m")
             return '', 200
 
+        # === !muteall ===
+        if text_lower.startswith('!muteall'):
+            if str(user_id) not in ADMIN_IDS:
+                send_system_message(f"> @{sender}: Only admins can use !muteall")
+                return '', 200
+
+            minutes = extract_last_number(text, 30)
+            mute_until = time.time() + minutes * 60
+
+            members = get_group_members()
+            muted_count = 0
+            skipped = []
+
+            for member in members:
+                uid = str(member.get("user_id"))
+                nick = member.get("nickname", "User")
+
+                if uid in ADMIN_IDS or uid == str(user_id) or member.get("sender_type") == "bot":
+                    skipped.append(nick)
+                    continue
+
+                muted_users[uid] = mute_until
+                muted_count += 1
+
+            send_system_message(
+                f"**MASS MUTE** by @{sender}\n"
+                f"**{muted_count}** users muted for **{minutes}** minute(s)\n"
+                f"Admins & bots skipped: {', '.join(skipped[:5])}{'...' if len(skipped) > 5 else ''}"
+            )
+            logger.info(f"!muteall by {sender} ({user_id}): {muted_count} muted, {minutes} min")
+            return '', 200
+
+        # === !unmuteall ===
+        if text_lower == '!unmuteall':
+            if str(user_id) not in ADMIN_IDS:
+                send_system_message(f"> @{sender}: Only admins can use !unmuteall")
+                return '', 200
+
+            count = len(muted_users)
+            muted_users.clear()
+
+            send_system_message(f"**MASS UNMUTE** by @{sender}\n**{count}** user(s) freed.")
+            logger.info(f"!unmuteall by {sender} ({user_id}): {count} unmuted")
+            return '', 200        
+
         # === !delete ===
         if text_lower.startswith('!delete'):
             if str(user_id) not in ADMIN_IDS:
