@@ -1068,7 +1068,6 @@ def webhook():
                 muted_users[uid] = mute_until
                 muted_count += 1
 
-            )
             logger.info(f"!muteall by {sender} ({user_id}): {muted_count} muted, {minutes} min")
             return '', 200
 
