@@ -1025,25 +1025,6 @@ def webhook():
                     send_system_message(f"@{sender}, links in text are not allowed. Your message was deleted. Use image/video upload instead.")
                     return '', 200
 
-        # === !mute ===
-        if text_lower.startswith('!mute'):
-            if str(user_id) not in ADMIN_IDS:
-                send_system_message(f"> @{sender}: {text}\nOnly admins can use !mute")
-                return '', 200
-
-            target = resolve_target_user(data, text)
-            if not target:
-                send_system_message("> Error: Could not find user. Reply to their message, @-mention them, or use exact name.")
-                return '', 200
-
-            target_id, target_nick = target
-            minutes = extract_last_number(text, 30)
-            muted_until = time.time() + minutes * 60
-            muted_users[target_id] = muted_until
-            send_system_message(f"{target_nick} (`{target_id}`) has been **muted** for **{minutes}** minute(s).")
-            logger.info(f"Muted {target_nick} ({target_id}) for {minutes}m")
-            return '', 200
-
         # === !muteall ===
         if text_lower.startswith('!muteall'):
             if str(user_id) not in ADMIN_IDS:
@@ -1082,7 +1063,26 @@ def webhook():
 
             send_system_message(f"**MASS UNMUTE** by @{sender}\n**{count}** user(s) freed.")
             logger.info(f"!unmuteall by {sender} ({user_id}): {count} unmuted")
-            return '', 200        
+            return '', 200                
+
+        # === !mute ===
+        if text_lower.startswith('!mute'):
+            if str(user_id) not in ADMIN_IDS:
+                send_system_message(f"> @{sender}: {text}\nOnly admins can use !mute")
+                return '', 200
+
+            target = resolve_target_user(data, text)
+            if not target:
+                send_system_message("> Error: Could not find user. Reply to their message, @-mention them, or use exact name.")
+                return '', 200
+
+            target_id, target_nick = target
+            minutes = extract_last_number(text, 30)
+            muted_until = time.time() + minutes * 60
+            muted_users[target_id] = muted_until
+            send_system_message(f"{target_nick} (`{target_id}`) has been **muted** for **{minutes}** minute(s).")
+            logger.info(f"Muted {target_nick} ({target_id}) for {minutes}m")
+            return '', 200
 
         # === !delete ===
         if text_lower.startswith('!delete'):
