@@ -1068,10 +1068,6 @@ def webhook():
                 muted_users[uid] = mute_until
                 muted_count += 1
 
-            send_system_message(
-                f"**MASS MUTE** by @{sender}\n"
-                f"**{muted_count}** users muted for **{minutes}** minute(s)\n"
-                f"Admins & bots skipped: {', '.join(skipped[:5])}{'...' if len(skipped) > 5 else ''}"
             )
             logger.info(f"!muteall by {sender} ({user_id}): {muted_count} muted, {minutes} min")
             return '', 200
