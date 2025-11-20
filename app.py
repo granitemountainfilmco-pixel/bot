@@ -1058,31 +1058,31 @@ def webhook():
             now = time.time()
             msg = (text or "").strip()
             
-            # Very small per-user log that lives only here
+            # Persistent storage attached to the webhook function itself
             if not hasattr(webhook, "spam_log"):
                 webhook.spam_log = {}
+            if not hasattr(webhook, "spam_text"):
+                webhook.spam_text = {}
+                
+            # Get/clean the timestamp log for this user (sliding 10-second window)
             log = webhook.spam_log.get(uid, [])
-            
-            # Drop anything older than 10 seconds
             log = [t for t in log if now - t < 10]
             
-            # Count how many recent messages were exactly the same as this one
-            same_count = sum(1 for t in log if webhook.spam_text[uid] == msg) if uid in webhook.spam_text else 0
+            # How many of the previous messages in the window were identical to this one?
+            prev_same = len(log) if webhook.spam_text.get(uid) == msg else 0
             
-            # Remember this message text and timestamp
-            webhook.spam_text = getattr(webhook, "spam_text", {})
-            webhook.spam_text[uid] = msg
+            # Record this message
             log.append(now)
             webhook.spam_log[uid] = log
+            webhook.spam_text[uid] = msg
             
-            # 5th identical message in the window
-            if same_count + 1 >= 5:
+            # 5th identical message → mute
+            if prev_same + 1 >= 5:  # change to >= 4 if you prefer triggering on the 4th
                 muted_users[uid] = now + 120
                 _delete_message_by_id(str(message_id))
                 send_system_message(f"{sender} muted for 2 minutes - sent 5 identical messages in 10 seconds")
                 logger.info(f"SPAM MUTE: {sender} ({uid}) - 5x identical")
-                # Clear so they don't instantly re-trigger
-                webhook.spam_log[uid] = []
+                webhook.spam_log[uid] = []  # prevent instant re-trigger on the next one
                 return '', 200
 
         # === !unmuteall ===
