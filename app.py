@@ -1005,7 +1005,7 @@ def webhook():
             return '', 200
 
         # VIOLATION CHECK
-        if user_id and text and message_id:
+        if user_id and message_id:
             if text_lower.startswith('!unmute') and str(user_id) in ADMIN_IDS:
                 pass
             else:
@@ -1018,7 +1018,7 @@ def webhook():
             increment_user_message_count(user_id, sender, text)
 
         # LINK DELETION
-        if user_id and text and message_id:
+        if user_id and message_id:
             if str(user_id) not in ADMIN_IDS:
                 if contains_link_but_no_attachments(text, attachments):
                     _delete_message_by_id(str(message_id))
