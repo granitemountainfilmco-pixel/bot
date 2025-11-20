@@ -1052,6 +1052,39 @@ def webhook():
             logger.info(f"!muteall by {sender} ({user_id}): {muted_count} muted, {minutes} min")
             return '', 200
 
+        # SPAM: 5 identical messages in 10 seconds → 2 min mute
+        if user_id and text and message_id:
+            uid = str(user_id)
+            now = time.time()
+            msg = (text or "").strip()
+            
+            # Very small per-user log that lives only here
+            if not hasattr(webhook, "spam_log"):
+                webhook.spam_log = {}
+            log = webhook.spam_log.get(uid, [])
+            
+            # Drop anything older than 10 seconds
+            log = [t for t in log if now - t < 10]
+            
+            # Count how many recent messages were exactly the same as this one
+            same_count = sum(1 for t in log if webhook.spam_text[uid] == msg) if uid in webhook.spam_text else 0
+            
+            # Remember this message text and timestamp
+            webhook.spam_text = getattr(webhook, "spam_text", {})
+            webhook.spam_text[uid] = msg
+            log.append(now)
+            webhook.spam_log[uid] = log
+            
+            # 5th identical message in the window
+            if same_count + 1 >= 5:
+                muted_users[uid] = now + 120
+                _delete_message_by_id(str(message_id))
+                send_system_message(f"{sender} muted for 2 minutes - sent 5 identical messages in 10 seconds")
+                logger.info(f"SPAM MUTE: {sender} ({uid}) - 5x identical")
+                # Clear so they don't instantly re-trigger
+                webhook.spam_log[uid] = []
+                return '', 200
+
         # === !unmuteall ===
         if text_lower == '!unmuteall':
             if str(user_id) not in ADMIN_IDS:
