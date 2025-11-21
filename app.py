@@ -170,9 +170,9 @@ def extract_last_number(text: str, default: int = 30) -> int:
         return default
 
 def contains_link_but_no_attachments(text: str, attachments: list) -> bool:
-    if re.search(r'http[s]?://[^\s<>"\']+', text, re.IGNORECASE):
-        return len(attachments) == 0
-    return False
+    # Old bypass: any attachment (even unrelated) allowed raw links
+    # New rule: raw links in text are NEVER allowed, period. Upload properly instead.
+    return bool(re.search(r'http[s]?://[^\s<>"\']+', text, re.IGNORECASE))
 
 # -----------------------
 # Ban Functions
