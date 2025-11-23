@@ -184,7 +184,9 @@ def contains_link_but_no_attachments(text: str, attachments: list) -> bool:
         "https://v.groupme.com", 
         "http://v.groupme.com", 
         "https://i.groupme.com", 
-        "http://i.groupme.com"
+        "http://i.groupme.com",
+        "https://m.groupme.com",
+        "http://m.groupme.com"
     )
 
     for link in links:
