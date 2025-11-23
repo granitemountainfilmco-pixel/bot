@@ -170,9 +170,32 @@ def extract_last_number(text: str, default: int = 30) -> int:
         return default
 
 def contains_link_but_no_attachments(text: str, attachments: list) -> bool:
-    # Old bypass: any attachment (even unrelated) allowed raw links
-    # New rule: raw links in text are NEVER allowed, period. Upload properly instead.
-    return bool(re.search(r'http[s]?://[^\s<>"\']+', text, re.IGNORECASE))
+    # Find all http/https links in the text
+    links = re.findall(r'http[s]?://[^\s<>"\']+', text, re.IGNORECASE)
+    
+    if not links:
+        return False
+
+    # specific subdomains for internal media only
+    # v.groupme.com = Video uploads
+    # i.groupme.com = Image uploads
+    # We use a tuple for startswith checking
+    allowed_media_prefixes = (
+        "https://v.groupme.com", 
+        "http://v.groupme.com", 
+        "https://i.groupme.com", 
+        "http://i.groupme.com"
+    )
+
+    for link in links:
+        # Check if the link starts with one of the allowed prefixes
+        if not link.lower().startswith(allowed_media_prefixes):
+            # If it's NOT a media upload link, it's a violation
+            # This catches "groupme.com/join_group" because it doesn't start with "v." or "i."
+            return True
+
+    # If we get here, all links found were valid media uploads
+    return False
 
 # -----------------------
 # Ban Functions
