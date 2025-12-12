@@ -257,7 +257,7 @@ def get_pixel_count(message_id: str) -> Optional[str]:
             stolen = True
         
         formatted_count = "{:,}".format(pixel_count)
-        text = f"That image is {width}x{height} ({formatted_count} pixels)."
+        text = f"The image you replied to has {width}x{height} ({formatted_count} pixels.)."
         
         if stolen:
             text += "\n^I ^stole ^a ^pixel."
