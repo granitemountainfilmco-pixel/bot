@@ -200,6 +200,53 @@ def contains_link_but_no_attachments(text: str, attachments: list) -> bool:
     return False
 
 # -----------------------
+# Pixel Counter Helper (Metadata Version)
+# -----------------------
+def get_pixel_count_from_metadata(message_id: str) -> Optional[str]:
+    """
+    Fetches message details and extracts dimensions directly from the attachment JSON
+    without downloading the image file.
+    """
+    url = f"{GROUPME_API}/groups/{GROUP_ID}/messages/{message_id}?token={ACCESS_TOKEN}"
+    try:
+        resp = requests.get(url, timeout=8)
+        if resp.status_code != 200:
+            logger.error(f"Failed to fetch message: {resp.status_code}")
+            return None
+
+        msg = resp.json().get('response', {}).get('message', {})
+        attachments = msg.get('attachments', [])
+        
+        for att in attachments:
+            if att.get('type') in ['image', 'linked_image', 'video']:
+                # GroupMe API often provides these directly
+                w = att.get('original_width') or att.get('width')
+                h = att.get('original_height') or att.get('height')
+                
+                # If valid dimensions found
+                if w and h:
+                    pixel_count = int(w) * int(h)
+                    
+                    # 1 in 50 chance to steal a pixel
+                    stolen = False
+                    if random.randint(1, 50) == 1:
+                        pixel_count -= 1
+                        stolen = True
+                    
+                    formatted_count = "{:,}".format(pixel_count)
+                    text = f"That image is {w}x{h} ({formatted_count} pixels)."
+                    
+                    if stolen:
+                        text += "\n^I ^stole ^a ^pixel."
+                    return text
+
+        return "Could not find resolution data in the message metadata."
+        
+    except Exception as e:
+        logger.error(f"Error in pixel metadata fetch: {e}")
+        return None
+
+# -----------------------
 # Ban Functions
 # -----------------------
 def get_user_membership_id(user_id):
@@ -1184,6 +1231,32 @@ def webhook():
                 send_system_message(f"{target_nick} (`{target_id}`) has been unmuted.")
             else:
                 send_system_message(f"{target_nick} (`{target_id}`) was not muted.")
+            return '', 200
+
+        # === !pixel ===
+        if text_lower.startswith('!pixel'):
+            # 1. Determine which message to check (Reply vs Self)
+            target_msg_id = None
+            replied = _find_replied_message(data)
+            
+            if replied:
+                # User replied to an image
+                target_msg_id = replied.get('message_id')
+            elif any(att.get('type') == 'image' for att in data.get('attachments', [])):
+                # User sent !pixel WITH an image
+                target_msg_id = message_id
+            else:
+                send_message(f"> @{sender}: Please reply to an image with !pixel.")
+                return '', 200
+
+            # 2. Get result from metadata
+            result_msg = get_pixel_count_from_metadata(target_msg_id)
+            
+            if result_msg:
+                send_message(result_msg)
+            else:
+                send_message(f"> @{sender}: I couldn't read the resolution from that message.")
+            
             return '', 200
 
         # === !ban ===
