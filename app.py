@@ -1,4 +1,6 @@
 from flask import Flask, request, jsonify, Blueprint
+from PIL import Image
+from io import BytesIO
 import requests
 import os
 import logging
@@ -200,12 +202,12 @@ def contains_link_but_no_attachments(text: str, attachments: list) -> bool:
     return False
 
 # -----------------------
-# Pixel Counter Helper (Metadata Version)
+# Pixel Counter Helper (Hybrid: Metadata + Download Fallback)
 # -----------------------
-def get_pixel_count_from_metadata(message_id: str) -> Optional[str]:
+def get_pixel_count(message_id: str) -> Optional[str]:
     """
-    Fetches message details and extracts dimensions directly from the attachment JSON
-    without downloading the image file.
+    1. Tries to get dimensions from GroupMe metadata.
+    2. If missing, downloads the image and counts pixels manually.
     """
     url = f"{GROUPME_API}/groups/{GROUP_ID}/messages/{message_id}?token={ACCESS_TOKEN}"
     try:
@@ -217,33 +219,53 @@ def get_pixel_count_from_metadata(message_id: str) -> Optional[str]:
         msg = resp.json().get('response', {}).get('message', {})
         attachments = msg.get('attachments', [])
         
+        target_url = None
+        width = None
+        height = None
+
+        # 1. Search for Image Attachment
         for att in attachments:
             if att.get('type') in ['image', 'linked_image', 'video']:
-                # GroupMe API often provides these directly
-                w = att.get('original_width') or att.get('width')
-                h = att.get('original_height') or att.get('height')
-                
-                # If valid dimensions found
-                if w and h:
-                    pixel_count = int(w) * int(h)
-                    
-                    # 1 in 50 chance to steal a pixel
-                    stolen = False
-                    if random.randint(1, 50) == 1:
-                        pixel_count -= 1
-                        stolen = True
-                    
-                    formatted_count = "{:,}".format(pixel_count)
-                    text = f"That image is {w}x{h} ({formatted_count} pixels)."
-                    
-                    if stolen:
-                        text += "\n^I ^stole ^a ^pixel."
-                    return text
-
-        return "Could not find resolution data in the message metadata."
+                target_url = att.get('url')
+                # Try to grab metadata if it exists
+                width = att.get('original_width') or att.get('width')
+                height = att.get('original_height') or att.get('height')
+                break
         
+        if not target_url:
+            return "No image found in that message."
+
+        # 2. If metadata failed, Download & Count (Fallback)
+        if not width or not height:
+            try:
+                logger.info(f"Metadata missing for {message_id}, downloading image...")
+                img_resp = requests.get(target_url, timeout=10)
+                img_resp.raise_for_status()
+                with Image.open(BytesIO(img_resp.content)) as img:
+                    width, height = img.size
+            except Exception as e:
+                logger.error(f"Failed to download/parse image: {e}")
+                return "I couldn't count the pixels (image download failed)."
+
+        # 3. Calculate and Format
+        pixel_count = int(width) * int(height)
+        
+        # 1 in 50 chance to steal a pixel
+        stolen = False
+        if random.randint(1, 50) == 1:
+            pixel_count -= 1
+            stolen = True
+        
+        formatted_count = "{:,}".format(pixel_count)
+        text = f"That image is {width}x{height} ({formatted_count} pixels)."
+        
+        if stolen:
+            text += "\n^I ^stole ^a ^pixel."
+            
+        return text
+
     except Exception as e:
-        logger.error(f"Error in pixel metadata fetch: {e}")
+        logger.error(f"Error in pixel counter: {e}")
         return None
 
 # -----------------------
@@ -1235,27 +1257,24 @@ def webhook():
 
         # === !pixel ===
         if text_lower.startswith('!pixel'):
-            # 1. Determine which message to check (Reply vs Self)
             target_msg_id = None
             replied = _find_replied_message(data)
             
             if replied:
-                # User replied to an image
                 target_msg_id = replied.get('message_id')
             elif any(att.get('type') == 'image' for att in data.get('attachments', [])):
-                # User sent !pixel WITH an image
                 target_msg_id = message_id
             else:
                 send_message(f"> @{sender}: Please reply to an image with !pixel.")
                 return '', 200
 
-            # 2. Get result from metadata
-            result_msg = get_pixel_count_from_metadata(target_msg_id)
+            # Use the robust function
+            result_msg = get_pixel_count(target_msg_id)
             
             if result_msg:
                 send_message(result_msg)
             else:
-                send_message(f"> @{sender}: I couldn't read the resolution from that message.")
+                send_message(f"> @{sender}: Error processing image.")
             
             return '', 200
 
