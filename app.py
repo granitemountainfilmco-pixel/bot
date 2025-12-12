@@ -200,14 +200,12 @@ def contains_link_but_no_attachments(text: str, attachments: list) -> bool:
 
     # If we get here, all links found were valid media uploads
     return False
-
-# -----------------------
-# Pixel Counter Helper (Hybrid: Metadata + Download Fallback)
-# -----------------------
+#pixel things
 def get_pixel_count(message_id: str) -> Optional[str]:
     """
     1. Tries to get dimensions from GroupMe metadata.
     2. If missing, downloads the image and counts pixels manually.
+    Now with maximum silliness injected directly.
     """
     url = f"{GROUPME_API}/groups/{GROUP_ID}/messages/{message_id}?token={ACCESS_TOKEN}"
     try:
@@ -215,26 +213,30 @@ def get_pixel_count(message_id: str) -> Optional[str]:
         if resp.status_code != 200:
             logger.error(f"Failed to fetch message: {resp.status_code}")
             return None
-
         msg = resp.json().get('response', {}).get('message', {})
         attachments = msg.get('attachments', [])
-        
+       
         target_url = None
         width = None
         height = None
-
+        
         # 1. Search for Image Attachment
         for att in attachments:
             if att.get('type') in ['image', 'linked_image', 'video']:
                 target_url = att.get('url')
-                # Try to grab metadata if it exists
                 width = att.get('original_width') or att.get('width')
                 height = att.get('original_height') or att.get('height')
                 break
-        
+       
         if not target_url:
-            return "No image found in that message."
-
+            return random.choice([
+                "No image found in that message. Did you reply to your own imagination?",
+                "There's no image here. Are you testing if I'm paying attention?",
+                "No image? Bold move. I respect the minimalism.",
+                "I see no image. Only zuul... wait, wrong movie.",
+                "No image detected. Sending you a virtual participation trophy anyway.",
+            ])
+        
         # 2. If metadata failed, Download & Count (Fallback)
         if not width or not height:
             try:
@@ -245,28 +247,76 @@ def get_pixel_count(message_id: str) -> Optional[str]:
                     width, height = img.size
             except Exception as e:
                 logger.error(f"Failed to download/parse image: {e}")
-                return "I couldn't count the pixels (image download failed)."
-
+                return random.choice([
+                    "I tried to count the pixels but got distracted by how pretty it is.",
+                    "The pixels are hiding from me. Rude.",
+                    "I couldn't count the pixels because they all look the same and I have commitment issues.",
+                    "Error: Pixels too powerful. My brain melted.",
+                    "The image said 'no' when I asked for its pixel count. Consent is important.",
+                    "I counted them but then forgot the number. ADHD pixels.",
+                ])
+        
         # 3. Calculate and Format
         pixel_count = int(width) * int(height)
-        
-        # 1 in 50 chance to steal a pixel
-        stolen = False
-        if random.randint(1, 50) == 1:
-            pixel_count -= 1
-            stolen = True
-        
         formatted_count = "{:,}".format(pixel_count)
+        
         text = f"The image you replied to has {width}x{height} ({formatted_count} pixels.)."
         
-        if stolen:
-            text += "\n^I ^stole ^a ^pixel."
-            
+        # --- Silliness triggers ---
+        
+        # 1 in 30 chance for regular silly flavor
+        if random.random() < 1/30:
+            flavor = random.choice([
+                f"That's enough pixels to fill {width} Olympic swimming pools if each pixel was a grain of sand.",
+                "Impressive! This image has more pixels than my ex has excuses.",
+                f"Wow, {pixel_count} pixels. That's like {width} hot dogs laid end-to-end... times {height}.",
+                "This image is basically a pixel party and everyone's invited.",
+                "Fun fact: if you blinked once per pixel, you'd be blinking until the heat death of the universe.",
+                f"That's {formatted_count} pixels of pure chaos.",
+                "I counted twice because I didn't believe it the first time.",
+                "This image has more pixels than there are stars in my emotional support galaxy.",
+                "Bold of you to assume I can count that high.",
+                "That's not an image, that's a pixel civilization.",
+            ])
+            text += "\n" + flavor
+        
+        # 1 in 40 chance to steal a pixel (with variety)
+        elif random.randint(1, 40) == 1:
+            pixel_count -= 1
+            formatted_count = "{:,}".format(pixel_count)
+            text = f"The image you replied to has {width}x{height} (~{formatted_count} pixels.)."
+            text += "\n" + random.choice([
+                "^I ^stole ^a ^pixel. It's mine now. Finders keepers.",
+                "^I ^stole ^a ^pixel. I'm building a secret collection.",
+                "^I ^stole ^a ^pixel. Shhh, don't tell anyone.",
+                "^I ^ate ^a ^pixel. It tasted like purple.",
+                "^I ^borrowed ^a ^pixel. I'll give it back... eventually.",
+                "^One ^pixel ^went ^missing ^during ^counting. ^Very ^suspicious.",
+                "^I ^replaced ^one ^pixel ^with ^a ^tiny ^picture ^of ^myself.",
+                "^Pixel ^tax ^collected. ^Thank ^you ^for ^your ^contribution.",
+            ])
+        
+        # Perfect square jackpot
+        elif pixel_count ** 0.5 == int(pixel_count ** 0.5):
+            text += "\n" + random.choice([
+                f"JACKPOT! This image has exactly {pixel_count} pixels — that's a perfect square! I'm legally required to be excited.",
+                "WHOA. Perfect square pixel count. The universe is aligning. Or I'm just easily impressed.",
+                "Perfect square detected. My circuits are doing a little dance right now.",
+            ])
+        
+        # Tiny image shaming
+        elif width < 100 and height < 100:
+            text += "\nCute little baby image. Look at it with its tiny pixels."
+        
+        # Massive image awe
+        elif pixel_count > 20_000_000:
+            text += "\nHOLY MEGAPIXELS. This thing could wallpaper the moon."
+           
         return text
-
+        
     except Exception as e:
         logger.error(f"Error in pixel counter: {e}")
-        return None
+        return "Something went catastrophically wrong and I blame the pixels."
 
 # -----------------------
 # Ban Functions
