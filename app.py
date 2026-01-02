@@ -484,37 +484,32 @@ def get_group_share_url() -> Optional[str]:
         logger.error(f"Failed to get group share URL: {e}")
         return None
 
-def google_search(query: str) -> str:
-    if not query or len(query.strip()) < 3:
-        return "Invalid query—try something longer!"
-    encoded_query = urllib.parse.quote(query.strip(), safe='')
-    headers = {"User-Agent": "Mozilla/5.0 (compatible; GoogleSearchBot/1.0)"}
+def get_ai_search(query):
+    """One-step AI search using Tavily."""
+    url = "https://api.tavily.com/search"
+    payload = {
+        "api_key": os.getenv("TAVILY_API_KEY"),
+        "query": query,
+        "include_answer": True,
+        "search_depth": "basic"
+    }
     try:
-        summary_url = f"https://en.wikipedia.org/api/rest_v1/page/summary/{encoded_query}"
-        r = requests.get(summary_url, timeout=8, headers=headers)
-        if r.status_code == 404:
-            search_url = f"https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch={encoded_query}&format=json&utf8=1"
-            s = requests.get(search_url, timeout=8, headers=headers)
-            s.raise_for_status()
-            results = s.json().get("query", {}).get("search", [])
-            if not results:
-                return "No relevant Wikipedia article found."
-            best_title = results[0]["title"]
-            encoded_best = urllib.parse.quote(best_title, safe='')
-            r = requests.get(f"https://en.wikipedia.org/api/rest_v1/page/summary/{encoded_best}", timeout=8, headers=headers)
-        r.raise_for_status()
-        data = r.json()
-        extract = data.get("extract", "").strip()
-        if not extract:
-            return "No summary available for this topic on Wikipedia."
-        sentences = extract.split('. ')
-        summary = '. '.join(sentences[:2])
-        if not summary.endswith('.'):
-            summary += '.'
-        return f"Quick answer: {summary} (Source: Wikipedia)"
+        # One request gets the search AND the AI answer
+        response = requests.post(url, json=payload, timeout=10)
+        data = response.json()
+        
+        # Priority 1: The AI-generated answer
+        if data.get("answer"):
+            return data["answer"]
+        
+        # Priority 2: The top web snippet if no answer was generated
+        if data.get("results"):
+            return data["results"][0]["content"][:300] + "..."
+            
+        return "I couldn't find anything on that."
     except Exception as e:
-        logger.error(f"Wikipedia search error for '{query}': {e}")
-        return f"Search failed—{e.__class__.__name__}: {e}"
+        logger.error(f"Search error: {e}")
+        return "Search service is currently unavailable."
 
 # -----------------------
 # SMART USER RESOLUTION
@@ -1393,15 +1388,16 @@ def webhook():
             get_strikes_report(target_id, target_nick, sender, user_id, text)
             return '', 200
 
-        # === !google / !g ===
-        if text_lower.startswith('!google ') or text_lower.startswith('!g '):
-            prefix = '!google ' if text_lower.startswith('!google ') else '!g '
-            query = text[len(prefix):].strip()
-            if not query:
-                send_message("> Usage: `!google <search term>`  or  `!g <search term>`")
-                return '', 200
-            answer = google_search(query)
-            send_message(f"> @{sender}: {answer}")
+        # --- Simplified AI Search Command ---
+        if text_lower.startswith('!google '):
+            query = text[8:].strip()
+            
+            def handle_search_task(q):
+                # This runs in the background to prevent app lag
+                answer = get_ai_search(q)
+                send_message(f"🤖 AI Answer: {answer}")
+
+            threading.Thread(target=handle_search_task, args=(query,)).start()
             return '', 200
 
         # === System Toggle ===
