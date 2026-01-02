@@ -1395,7 +1395,7 @@ def webhook():
             def handle_search_task(q):
                 # This runs in the background to prevent app lag
                 answer = get_ai_search(q)
-                send_message(f"🤖 AI Answer: {answer}")
+                send_message(f"{answer}")
 
             threading.Thread(target=handle_search_task, args=(query,)).start()
             return '', 200
