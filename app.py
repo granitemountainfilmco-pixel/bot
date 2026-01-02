@@ -422,7 +422,6 @@ def daily_coin_inflation_worker():
 
             save_game_data(game_data)
             logger.info(f"Daily inflation: +100 coins to {affected} players.")
-            send_message("**DAILY DROP** — Everyone gets **+100 MemeCoins**! Check `!balance`")
 
         except Exception as e:
             logger.error(f"Inflation worker error: {e}")
