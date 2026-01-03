@@ -508,51 +508,48 @@ def is_safe(text: str) -> bool:
     return True
 
 def get_ai_search(query: str) -> str:
-    """AI search with embedded safety instructions for the model."""
+    """Refined AI search with strict content filtering."""
     
-    # 1. Safety check before sending to the web
+    # Pre-check: Don't even waste API credits on garbage
     if not is_safe(query):
-        return "⚠️ Safety Error: Your request contains prohibited or sensitive terms."
-
-    # 2. Wrap the query in a 'System Instruction'
-    # This tells the Tavily AI how to act and what to avoid.
-    safety_wrapper = (
-        "Instructions: You are a helpful assistant for a group called clean memes. Provide a, "
-        "professional summary, ideally 1-2 sentences, can be longer for detailed ones. Strictly avoid any profanity, slurs, or objectionable "
-        "content. If the search results contain private information like addresses, "
-        "phone numbers, or real names of private individuals, redact or ignore them. Additionally, if the topic is unneccesarily violent, ignore the query, and respond with I ain't telling you that bro. "
-        f"Query: {query}"
-    )
+        return " I can't look that up for you. Let's keep it clean."
 
     url = "https://api.tavily.com/search"
     payload = {
         "api_key": os.getenv("TAVILY_API_KEY"),
-        "query": safety_wrapper, # We send the wrapper instead of just the query
+        "query": query,  # Send ONLY the query here
+        "search_depth": "basic",
         "include_answer": True,
-        "search_depth": "basic"
+        "max_results": 3
     }
     
     try:
         response = requests.post(url, json=payload, timeout=10)
+        if response.status_code != 200:
+            logger.error(f"Tavily API Error: {response.status_code}")
+            return "Search service is a bit grumpy right now. Try again later."
+
         data = response.json()
-        
         answer = data.get("answer")
         
-        # 3. Fallback to snippets if no direct answer
+        # Fallback: If 'answer' is missing, summarize the top snippets
         if not answer and data.get("results"):
-            answer = data["results"][0]["content"][:300]
+            snippets = [res["content"] for res in data["results"][:2]]
+            answer = " ".join(snippets)[:400] + "..."
             
         if not answer:
-            return "I couldn't find anything on that."
+            return "I searched high and low but couldn't find a straight answer for that."
 
-        # 4. Final output check to ensure the AI followed instructions
+        # Final Safety Scrub: Remove URLs (if you want) and check for profanity
+        # This prevents the AI from returning a link that contains a swear word
         if not is_safe(answer):
-            return "Security Filter: The response was blocked due to sensitive content."
+            return "The search results were a bit too extreme for this group. Filtered!"
             
         return answer
+
     except Exception as e:
         logger.error(f"Search error: {e}")
-        return "Search service is currently unavailable."
+        return "My brain short-circuited trying to find that. Sorry!"
 
 # -----------------------
 # SMART USER RESOLUTION
@@ -1431,16 +1428,22 @@ def webhook():
             get_strikes_report(target_id, target_nick, sender, user_id, text)
             return '', 200
 
-        # --- Simplified AI Search Command ---
+# --- Improved AI Search Command ---
         if text_lower.startswith('!google '):
             query = text[8:].strip()
-            
-            def handle_search_task(q):
-                # This runs in the background to prevent app lag
-                answer = get_ai_search(q)
-                send_message(f"{answer}")
+            if not query:
+                send_message(f"> @{sender}: You gotta give me something to search for!")
+                return '', 200
 
-            threading.Thread(target=handle_search_task, args=(query,)).start()
+            def handle_search_task(q, original_sender):
+                # Run search
+                result = get_ai_search(q)
+                # Format response to credit the user
+                final_text = f"> @{original_sender} searched for: {q}\n\n{result}"
+                send_message(final_text)
+
+            # Pass the sender name to the thread
+            threading.Thread(target=handle_search_task, args=(query, sender)).start()
             return '', 200
 
         # === System Toggle ===
