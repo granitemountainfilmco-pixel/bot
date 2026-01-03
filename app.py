@@ -520,7 +520,7 @@ def get_ai_search(query: str) -> str:
         "query": query,  # Send ONLY the query here
         "search_depth": "basic",
         "include_answer": True,
-        "max_results": 3
+        "max_results": 10
     }
     
     try:
