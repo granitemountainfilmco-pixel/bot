@@ -500,9 +500,6 @@ def is_safe(text: str) -> bool:
     # 2. Basic PII/Dox protection (Phone numbers & IP addresses)
     # Matches typical phone formats and IPv4 addresses
     pii_patterns = [
-        r'\d{3}-\d{3}-\d{4}',       # Phone: 555-555-5555
-        r'\(\d{3}\)\s\d{3}-\d{4}',  # Phone: (555) 555-5555
-        r'\b(?:\d{1,3}\.){3}\d{1,3}\b' # IP Address
     ]
     for pattern in pii_patterns:
         if re.search(pattern, text):
@@ -520,10 +517,10 @@ def get_ai_search(query: str) -> str:
     # 2. Wrap the query in a 'System Instruction'
     # This tells the Tavily AI how to act and what to avoid.
     safety_wrapper = (
-        "Instructions: You are a helpful and safe assistant. Provide a concise, "
-        "professional summary. Strictly avoid any profanity, slurs, or inappropriate "
+        "Instructions: You are a helpful assistant for a group called clean memes. Provide a, "
+        "professional summary, ideally 1-2 sentences, can be longer for detailed ones. Strictly avoid any profanity, slurs, or objectionable "
         "content. If the search results contain private information like addresses, "
-        "phone numbers, or real names of private individuals, redact or ignore them. "
+        "phone numbers, or real names of private individuals, redact or ignore them. Additionally, if the topic is unneccesarily violent, ignore the query, and respond with I ain't telling you that bro. "
         f"Query: {query}"
     )
 
@@ -550,7 +547,7 @@ def get_ai_search(query: str) -> str:
 
         # 4. Final output check to ensure the AI followed instructions
         if not is_safe(answer):
-            return "⚠️ Security Filter: The response was blocked due to sensitive content."
+            return "Security Filter: The response was blocked due to sensitive content."
             
         return answer
     except Exception as e:
