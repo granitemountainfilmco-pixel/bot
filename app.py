@@ -511,15 +511,26 @@ def is_safe(text: str) -> bool:
     return True
 
 def get_ai_search(query: str) -> str:
-    """One-step AI search with safety guardrails."""
-    # Pre-search check
+    """AI search with embedded safety instructions for the model."""
+    
+    # 1. Safety check before sending to the web
     if not is_safe(query):
-        return "I cannot search for that content as it violates safety guidelines."
+        return "⚠️ Safety Error: Your request contains prohibited or sensitive terms."
+
+    # 2. Wrap the query in a 'System Instruction'
+    # This tells the Tavily AI how to act and what to avoid.
+    safety_wrapper = (
+        "Instructions: You are a helpful and safe assistant. Provide a concise, "
+        "professional summary. Strictly avoid any profanity, slurs, or inappropriate "
+        "content. If the search results contain private information like addresses, "
+        "phone numbers, or real names of private individuals, redact or ignore them. "
+        f"Query: {query}"
+    )
 
     url = "https://api.tavily.com/search"
     payload = {
         "api_key": os.getenv("TAVILY_API_KEY"),
-        "query": query,
+        "query": safety_wrapper, # We send the wrapper instead of just the query
         "include_answer": True,
         "search_depth": "basic"
     }
@@ -528,20 +539,20 @@ def get_ai_search(query: str) -> str:
         response = requests.post(url, json=payload, timeout=10)
         data = response.json()
         
-        # Determine the raw answer
-        raw_answer = data.get("answer")
-        if not raw_answer and data.get("results"):
-            raw_answer = data["results"][0]["content"][:300]
+        answer = data.get("answer")
         
-        if not raw_answer:
+        # 3. Fallback to snippets if no direct answer
+        if not answer and data.get("results"):
+            answer = data["results"][0]["content"][:300]
+            
+        if not answer:
             return "I couldn't find anything on that."
 
-        # Post-search safety check
-        if not is_safe(raw_answer):
-            return "The search results contained restricted content and cannot be displayed."
+        # 4. Final output check to ensure the AI followed instructions
+        if not is_safe(answer):
+            return "⚠️ Security Filter: The response was blocked due to sensitive content."
             
-        return raw_answer
-
+        return answer
     except Exception as e:
         logger.error(f"Search error: {e}")
         return "Search service is currently unavailable."
