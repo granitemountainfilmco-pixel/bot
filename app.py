@@ -484,8 +484,38 @@ def get_group_share_url() -> Optional[str]:
         logger.error(f"Failed to get group share URL: {e}")
         return None
 
-def get_ai_search(query):
-    """One-step AI search using Tavily."""
+def is_safe(text: str) -> bool:
+    """Checks if text contains banned words or PII patterns."""
+    if not text:
+        return True
+    
+    content = text.lower()
+    
+    # 1. Check against your existing swear lists
+    all_banned_words = INSTANT_BAN_WORDS + REGULAR_SWEAR_WORDS
+    for word in all_banned_words:
+        if word in content:
+            return False
+            
+    # 2. Basic PII/Dox protection (Phone numbers & IP addresses)
+    # Matches typical phone formats and IPv4 addresses
+    pii_patterns = [
+        r'\d{3}-\d{3}-\d{4}',       # Phone: 555-555-5555
+        r'\(\d{3}\)\s\d{3}-\d{4}',  # Phone: (555) 555-5555
+        r'\b(?:\d{1,3}\.){3}\d{1,3}\b' # IP Address
+    ]
+    for pattern in pii_patterns:
+        if re.search(pattern, text):
+            return False
+            
+    return True
+
+def get_ai_search(query: str) -> str:
+    """One-step AI search with safety guardrails."""
+    # Pre-search check
+    if not is_safe(query):
+        return "I cannot search for that content as it violates safety guidelines."
+
     url = "https://api.tavily.com/search"
     payload = {
         "api_key": os.getenv("TAVILY_API_KEY"),
@@ -493,20 +523,25 @@ def get_ai_search(query):
         "include_answer": True,
         "search_depth": "basic"
     }
+    
     try:
-        # One request gets the search AND the AI answer
         response = requests.post(url, json=payload, timeout=10)
         data = response.json()
         
-        # Priority 1: The AI-generated answer
-        if data.get("answer"):
-            return data["answer"]
+        # Determine the raw answer
+        raw_answer = data.get("answer")
+        if not raw_answer and data.get("results"):
+            raw_answer = data["results"][0]["content"][:300]
         
-        # Priority 2: The top web snippet if no answer was generated
-        if data.get("results"):
-            return data["results"][0]["content"][:300] + "..."
+        if not raw_answer:
+            return "I couldn't find anything on that."
+
+        # Post-search safety check
+        if not is_safe(raw_answer):
+            return "The search results contained restricted content and cannot be displayed."
             
-        return "I couldn't find anything on that."
+        return raw_answer
+
     except Exception as e:
         logger.error(f"Search error: {e}")
         return "Search service is currently unavailable."
