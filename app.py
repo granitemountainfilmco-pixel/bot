@@ -9,6 +9,7 @@ import threading
 from fuzzywuzzy import process, fuzz
 import urllib.parse
 import json
+import math
 import re
 from typing import Dict, Any, Optional, Tuple, List
 from datetime import datetime, timedelta
@@ -123,6 +124,44 @@ user_swear_counts = load_json(user_swear_counts_file) or {}
 former_members = load_json(former_members_file) or {}
 user_strikes = load_json(strikes_file) or {}
 
+def get_factorial_response(text: str) -> Optional[str]:
+    # Regex: Matches a number followed by ! (e.g., 500!) 
+    # ensuring it's not part of a word or decimal.
+    match = re.search(r'\b(\d+)!', text)
+    if not match:
+        return None
+    
+    n = int(match.group(1))
+    
+    # CASE 1: Small numbers (0 to 20) - Exact result
+    if n <= 20:
+        return f"{n}! = {math.factorial(n):,}"
+    
+    # CASE 2: Medium numbers (21 to 1,000) - Scientific Notation via Exact Math
+    if n <= 1000:
+        res = math.factorial(n)
+        return f"{n}! ≈ {res:.4e}"
+
+    # CASE 3: Astronomical numbers - Stirling's Approximation
+    # Stirling's: log10(n!) ≈ log10(sqrt(2*pi*n)) + n*log10(n/e)
+    # This avoids O(n) loops and prevents the bot from hanging.
+    try:
+        log10_factorial = (0.5 * math.log10(2 * math.pi * n)) + (n * math.log10(n / math.e))
+        
+        exponent = math.floor(log10_factorial)
+        mantissa = 10**(log10_factorial - exponent)
+        digits = exponent + 1
+        
+        # Stacking exponents for truly massive numbers (Reddit bot style)
+        if digits > 1_000_000_000:
+            # log10 of the digit count
+            stack_exp = math.log10(digits)
+            return f"{n}! ≈ 10^10^{stack_exp:.2f} (A number so large it has over a billion digits)"
+        
+        return f"{n}! ≈ {mantissa:.4f} × 10^{exponent} ({digits:,} digits)"
+    except OverflowError:
+        return f"{n}! is effectively infinity for my hardware."
+        
 # -----------------------
 # Daily Tracking Init
 # -----------------------
@@ -1195,6 +1234,7 @@ def webhook():
         if user_id and text:
             increment_user_message_count(user_id, sender, text)
 
+
         # LINK DELETION
         if user_id and message_id:
             if str(user_id) not in ADMIN_IDS:
@@ -1481,6 +1521,13 @@ def webhook():
             msg = _build_leaderboard_message()
             send_message(msg)
             return '', 200
+
+                # === !Factorial Trigger ===
+        if text:
+            fact_msg = get_factorial_response(text)
+            if fact_msg:
+                send_message(fact_msg)
+                return '', 200
 
         return '', 200
 
