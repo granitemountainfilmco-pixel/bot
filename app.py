@@ -408,6 +408,7 @@ def _delete_message_by_id(msg_id: str) -> bool:
         
 def ban_user(user_id, username, reason):
     try:
+        if str(user_id) in ADMIN_IDS: return False
         membership_id = get_user_membership_id(user_id)
         if not membership_id:
             logger.warning(f"Cannot ban {username} ({user_id}) — membership id not found")
