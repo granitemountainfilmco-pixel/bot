@@ -1538,6 +1538,8 @@ def webhook():
             send_message("Error: Only God himself can use this command")
         elif 'cooper is my pookie' in text_lower:
             send_message("me too bro")
+        elif 'can I get admin' in text_lower:
+            send_message("NO")
         elif 'wrx is tall' in text_lower:
             send_message("Wrx considers a chihuahua to be a large dog")
         elif 'https:' in text and not any(att.get("type") == "video" for att in attachments):
