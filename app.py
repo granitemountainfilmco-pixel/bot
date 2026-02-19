@@ -343,7 +343,7 @@ def get_pixel_count(message_id: str) -> Optional[str]:
                 "Perfect square detected. My circuits are doing a little dance right now.",
             ])
 
-        elif width = 1 and heigh = 1:
+        elif width == 1 and height == 1:
             text +="\n1 pixel! GLORIOUS! I SHALL REPORT THIS TO MY OVERLORDS."
         
         # Tiny image shaming
