@@ -334,6 +334,9 @@ def get_pixel_count(message_id: str) -> Optional[str]:
                 "^I ^replaced ^one ^pixel ^with ^a ^tiny ^picture ^of ^myself.",
                 "^Pixel ^tax ^collected. ^Thank ^you ^for ^your ^contribution.",
             ])
+
+        elif width == 1 and height == 1:
+            text +="\n1 pixel! GLORIOUS! I SHALL REPORT THIS TO MY OVERLORDS."
         
         # Perfect square jackpot
         elif pixel_count ** 0.5 == int(pixel_count ** 0.5):
@@ -342,9 +345,6 @@ def get_pixel_count(message_id: str) -> Optional[str]:
                 "WHOA. Perfect square pixel count. The universe is aligning. Or I'm just easily impressed.",
                 "Perfect square detected. My circuits are doing a little dance right now.",
             ])
-
-        elif width == 1 and height == 1:
-            text +="\n1 pixel! GLORIOUS! I SHALL REPORT THIS TO MY OVERLORDS."
         
         # Tiny image shaming
         elif width < 100 and height < 100:
