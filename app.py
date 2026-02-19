@@ -17,6 +17,15 @@ import random
 
 app = Flask(__name__)
 
+from threading import Lock
+leaderboard_lock = Lock()
+
+def safe_save_json(path, data):
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, path)
+
 # --- MERGED CONFIG ---
 ACCESS_TOKEN = os.getenv("ACCESS_TOKEN")  # Shared: GroupMe API token
 GROUP_ID = os.getenv("GROUP_ID")  # Shared: Group ID
@@ -161,7 +170,7 @@ def get_factorial_response(text: str) -> Optional[str]:
         return f"{n}! ≈ {mantissa:.4f} × 10^{exponent} ({digits:,} digits)"
     except OverflowError:
         return f"{n}! is effectively infinity for my hardware."
-        
+
 # -----------------------
 # Daily Tracking Init
 # -----------------------
@@ -1034,36 +1043,53 @@ def increment_user_message_count(user_id: str, username: str, text: str) -> None
     try:
         _ensure_today_keys()
         uid = str(user_id)
-        last_text = last_message_by_user.get(uid)
         normalized = (text or "").strip()
-        if last_text == normalized:
-            return
-        last_message_by_user[uid] = normalized
-        daily_message_counts[uid] = int(daily_message_counts.get(uid, 0)) + 1
-        save_json(last_messages_file, {"date": daily_counts_date, "last": last_message_by_user})
-        save_json(daily_counts_file, {"date": daily_counts_date, "counts": daily_message_counts})
+
+        with leaderboard_lock:
+            # Always count the message — no duplicate suppression
+            daily_message_counts[uid] = daily_message_counts.get(uid, 0) + 1
+
+            # Update last message
+            last_message_by_user[uid] = normalized
+
+            # Atomic saves
+            safe_save_json(daily_counts_file, {"date": daily_counts_date, "counts": daily_message_counts})
+            safe_save_json(last_messages_file, {"date": daily_counts_date, "last": last_message_by_user})
+
     except Exception as e:
         logger.error(f"Error incrementing count: {e}")
 
 def _build_leaderboard_message(top_n: int = 3) -> str:
     try:
         _ensure_today_keys()
-        if not daily_message_counts:
-            return "Daily Unemployed Leaders:\nNo messages recorded today."
-        members = get_group_members()
-        id_to_nick = {str(m.get("user_id")): m.get("nickname") for m in members if m.get("user_id")}
-        fallback = {str(k): v for k, v in former_members.items()}
-        sorted_items = sorted(daily_message_counts.items(), key=lambda kv: (-int(kv[1]), kv[0]))
-        lines = ["Daily Unemployed Leaders:"]
-        rank = 1
-        for uid, cnt in sorted_items[:top_n]:
-            name = id_to_nick.get(uid) or fallback.get(uid) or f"User {uid}"
-            lines.append(f"{rank}. {name} ({cnt})")
-            rank += 1
-        return "\n".join(lines)
+
+        with leaderboard_lock:
+            if not daily_message_counts:
+                return "Daily Unemployed Leaders:\nNo messages recorded today."
+
+            members = get_group_members()
+            id_to_nick = {str(m.get("user_id")): m.get("nickname") for m in members if m.get("user_id")}
+            fallback = {str(k): v for k, v in former_members.items()}
+
+            sorted_items = sorted(
+                daily_message_counts.items(),
+                key=lambda kv: (-int(kv[1]), kv[0])
+            )
+
+            lines = ["Daily Unemployed Leaders:"]
+            rank = 1
+
+            for uid, cnt in sorted_items[:top_n]:
+                name = id_to_nick.get(uid) or fallback.get(uid) or f"User {uid}"
+                lines.append(f"{rank}. {name} ({cnt})")
+                rank += 1
+
+            return "\n".join(lines)
+
     except Exception as e:
         logger.error(f"Error building leaderboard: {e}")
         return "Daily Unemployed Leaders:\nError."
+
 
 def _reset_daily_counts():
     global daily_message_counts, last_message_by_user, daily_counts_date, last_messages_date
