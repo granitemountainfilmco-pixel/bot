@@ -1538,8 +1538,6 @@ def webhook():
             send_message("Error: Only God himself can use this command")
         elif 'cooper is my pookie' in text_lower:
             send_message("me too bro")
-        elif 'can I get admin' in text_lower:
-            send_message("NO")
         elif 'wrx is tall' in text_lower:
             send_message("Wrx considers a chihuahua to be a large dog")
         elif 'https:' in text and not any(att.get("type") == "video" for att in attachments):
@@ -1548,7 +1546,11 @@ def webhook():
             send_message("please censor that to fr*nce")
         elif 'french' in text_lower:
             send_message("please censor that to fr*nch")
-
+        elif 'can i get admin' in text_lower:
+            send_message("No.")
+        elif 'can i have admin' in text_lower:
+            send_message("No.")
+            
         if text_lower.strip() == '!leaderboard':
             msg = _build_leaderboard_message()
             send_message(msg)
