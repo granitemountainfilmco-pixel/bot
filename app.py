@@ -1556,6 +1556,10 @@ def webhook():
             send_message("No.")
         elif 'may i have admin' in text_lower:
             send_message("No.")
+        elif 'can i be admin' in text_lower:
+            send_message("No.")
+        elif 'nene can I get admin' in text_lower:
+            send_message("No.")
             
         if text_lower.strip() == '!leaderboard':
             msg = _build_leaderboard_message()
