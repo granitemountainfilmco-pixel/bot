@@ -232,7 +232,6 @@ def get_help_message(is_admin: bool) -> str:
             "Ask an admin if you need something done.\n"
         )
 
-
 def extract_last_number(text: str, default: int = 30) -> int:
     """
     Extract the LAST integer from text.
