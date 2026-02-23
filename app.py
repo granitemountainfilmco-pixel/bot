@@ -401,6 +401,27 @@ def get_pixel_count(message_id: str) -> Optional[str]:
         return "Something went catastrophically wrong and I blame the pixels."
 
 # -----------------------
+# Startup Message Helper
+# -----------------------
+def send_startup_message():
+    """Send a message to the GroupMe chat when the bot boots."""
+    if not BOT_ID:
+        print("BOT_ID missing — cannot send startup message.")
+        return
+
+    url = "https://api.groupme.com/v3/bots/post"
+    payload = {
+        "bot_id": BOT_ID,
+        "text": "Bot started successfully — code is live!"
+    }
+
+    try:
+        requests.post(url, json=payload, timeout=5)
+    except Exception as e:
+        print("Startup message failed:", e)
+
+
+# -----------------------
 # Ban Functions
 # -----------------------
 def get_user_membership_id(user_id):
@@ -1648,9 +1669,14 @@ def keep_alive():
 # -----------------------
 if __name__ == "__main__":
     keep_alive()
+
+    # Send startup notification to GroupMe
+    send_startup_message()
+
     try:
         port = int(os.environ.get("PORT", 5000))
         logger.info(f"Starting Flask app on port {port}")
         app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
     except Exception as e:
         logger.error(f"Failed to start server: {e}")
+
