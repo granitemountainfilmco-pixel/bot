@@ -221,26 +221,6 @@ def extract_last_number(text: str, default: int = 30) -> int:
     except:
         return default
 
-def handle_selfmute(sender_id: str, sender_name: str) -> str:
-    """
-    Mutes the sender for exactly 5 minutes.
-    Prevents stacking if they're already muted.
-    """
-    now = time.time()
-
-    # If already muted, don't stack
-    if str(sender_id) in muted_users and muted_users[str(sender_id)] > now:
-        remaining = int((muted_users[str(sender_id)] - now) / 60)
-        return f"@{sender_name} you're already muted for another {remaining} minutes."
-
-    duration_minutes = 5
-    mute_until = now + (duration_minutes * 60)
-
-    muted_users[str(sender_id)] = mute_until
-
-    return f"@{sender_name} has muted themselves for {duration_minutes} minutes."
-
-
 def contains_link_but_no_attachments(text: str, attachments: list) -> bool:
     # Find all http/https links in the text
     links = re.findall(r'http[s]?://[^\s<>"\']+', text, re.IGNORECASE)
@@ -1518,11 +1498,6 @@ def webhook():
 
             target_id, target_nick = target
             get_strikes_report(target_id, target_nick, sender, user_id, text)
-            return '', 200
-        # === !selfmute ===
-        if text_lower.startswith('!selfmute'):
-            msg = handle_selfmute(user_id, sender)
-            send_system_message(msg)
             return '', 200
 
 # --- Improved AI Search Command ---
