@@ -44,7 +44,7 @@ ADMIN_IDS = [
 ]
 JSONBIN_MASTER_KEY = os.getenv("JSONBIN_MASTER_KEY")
 JSONBIN_BIN_ID = os.getenv("JSONBIN_BIN_ID")
-             json={"bot": {"avatar_url": "https://i.postimg.cc/5ynXT55s/Clanker-Guy-PFP.png"}})
+
 # Swear word categories
 INSTANT_BAN_WORDS = [
     'nigger', 'nigga', 'n1gger', 'n1gga', 'nigg', 'n1gg', 'nigha семь',
