@@ -202,6 +202,36 @@ def _initialize_daily_tracking():
 
 _initialize_daily_tracking()
 
+def get_help_message(is_admin: bool) -> str:
+    if is_admin:
+        return (
+            "ClankerGuy Help Menu (Admin)\n"
+            "-----------------------------\n"
+            "Moderation Commands:\n"
+            "• !mute <user> <minutes> – Mute a user\n"
+            "• !unmute <user> – Unmute a user\n"
+            "• !muteall <minutes> – Mute everyone except admins\n"
+            "• !unmuteall – Unmute everyone\n"
+            "• !ban <user> – Ban a user\n"
+            "• !unban <user> – Unban a user\n"
+            "• !delete – Delete a message (reply to it)\n"
+            "• !strike <user> – Issue a strike\n"
+            "• !strikes <user> – View strikes\n"
+            "• !getid <name> – Get a user's ID\n\n"
+            "Utility Commands:\n"
+            "• !pixel – Count pixels in an image\n"
+            "• !google <query> – AI search\n"
+            "• !leaderboard – Show message leaderboard\n"
+            "• !enable / !disable – Toggle system messages\n"
+        )
+    else:
+        return (
+            "ClankerGuy Help Menu\n"
+            "---------------------\n"
+            "You do not have admin permissions.\n"
+            "Ask an admin if you need something done.\n"
+        )
+
 
 def extract_last_number(text: str, default: int = 30) -> int:
     """
@@ -1500,6 +1530,19 @@ def webhook():
             get_strikes_report(target_id, target_nick, sender, user_id, text)
             return '', 200
 
+        # === !help ===
+        if text_lower.strip() == '!help':
+            is_admin = str(user_id) in ADMIN_IDS
+            msg = get_help_message(is_admin)
+
+            if is_admin:
+                send_system_message(msg)
+            else:
+                send_message(msg)
+
+            return '', 200
+
+        
 # --- Improved AI Search Command ---
         if text_lower.startswith('!google '):
             query = text[8:].strip()
