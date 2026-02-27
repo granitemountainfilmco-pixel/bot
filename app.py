@@ -493,7 +493,8 @@ def _find_replied_message(data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     for att in data.get("attachments", []):
         if att.get("type") == "reply":
             return {
-                "message_id": att.get("reply_id") or att.get("id"),
+                # base_reply_id is the standard GroupMe key for the original message ID
+                "message_id": att.get("base_reply_id"), 
                 "user_id": att.get("user_id"),
                 "name": att.get("name")
             }
