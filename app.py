@@ -498,41 +498,6 @@ def call_ban_service(user_id: str, username: str, reason: str) -> bool:
         save_json(user_swear_counts_file, user_swear_counts)
     return success
 
-# -------------------------------------------------
-# DAILY 100 COIN INFLATION — EVERY 24 HOURS
-# -------------------------------------------------
-def daily_coin_inflation_worker():
-    logger.info("Daily inflation thread started.")
-    while True:
-        try:
-            now = datetime.utcnow()
-            next_run = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
-            sleep_seconds = (next_run - now).total_seconds()
-            if sleep_seconds > 0:
-                time.sleep(sleep_seconds)
-
-            if "balances" not in game_data:
-                game_data["balances"] = {}
-            
-            affected = 0
-            for uid in list(game_data["balances"].keys()):
-                game_data["balances"][uid] += 100
-                affected += 1
-
-            for uid in game_data.get("has_minted", set()):
-                uid = str(uid)
-                game_data["balances"][uid] = game_data["balances"].get(uid, 0) + 100
-                affected += 1
-
-            save_game_data(game_data)
-            logger.info(f"Daily inflation: +100 coins to {affected} players.")
-
-        except Exception as e:
-            logger.error(f"Inflation worker error: {e}")
-            time.sleep(3600)
-
-inflation_thread = threading.Thread(target=daily_coin_inflation_worker, daemon=True)
-inflation_thread.start()
 
 # -----------------------
 # Message Deletion (Community API)
@@ -1187,91 +1152,7 @@ def start_leaderboard_thread_once():
         start_leaderboard_thread_once._started = True
         logger.info("Leaderboard thread initialized.")
 
-# -----------------------
-# Jsonbin Helpers
-# -----------------------
-def load_game_data() -> Dict[str, Any]:
-    if not JSONBIN_MASTER_KEY or not JSONBIN_BIN_ID:
-        logger.error("Missing JSONBIN creds")
-        return {}
-    url = f"https://api.jsonbin.io/v3/b/{JSONBIN_BIN_ID}/latest"
-    headers = {"X-Master-Key": JSONBIN_MASTER_KEY}
-    try:
-        resp = requests.get(url, headers=headers, timeout=5)
-        resp.raise_for_status()
-        data = resp.json().get("record", {})
-        data["has_minted"] = set(data.get("has_minted", []))
-        return data
-    except Exception as e:
-        logger.error(f"Jsonbin load error: {e}")
-        return {}
 
-def save_game_data(data: Dict[str, Any]) -> bool:
-    if not JSONBIN_MASTER_KEY or not JSONBIN_BIN_ID:
-        return False
-    save_data = data.copy()
-    save_data["has_minted"] = list(save_data["has_minted"])
-    url = f"https://api.jsonbin.io/v3/b/{JSONBIN_BIN_ID}"
-    headers = {"X-Master-Key": JSONBIN_MASTER_KEY, "Content-Type": "application/json"}
-    try:
-        resp = requests.put(url, headers=headers, json=save_data, timeout=5)
-        resp.raise_for_status()
-        return True
-    except Exception as e:
-        logger.error(f"Jsonbin save error: {e}")
-        return False
-
-# Game Data Init
-game_data = load_game_data() or {
-    "nfts": {},
-    "balances": {},
-    "has_minted": set(),
-    "pending_rarity": {}
-}
-next_nft_id = max([int(k) for k in game_data["nfts"]], default=0) + 1
-
-# -----------------------
-# Get Message Likes
-# -----------------------
-def get_message_likes(message_id: str) -> int:
-    url = f"{GROUPME_API}/groups/{GROUP_ID}/messages/{message_id}?token={ACCESS_TOKEN}"
-    try:
-        resp = requests.get(url, timeout=8)
-        if resp.status_code == 200:
-            msg = resp.json().get('response', {}).get('message', {})
-            return len(msg.get('favorited_by', []))
-        else:
-            logger.error(f"Get likes failed: {resp.status_code}")
-            return 0
-    except Exception as e:
-        logger.error(f"Get likes error: {e}")
-        return 0
-
-# -----------------------
-# Rarity Update Thread
-# -----------------------
-def rarity_update_worker():
-    while True:
-        try:
-            now = time.time()
-            updated = False
-            for nft_id, info in list(game_data["pending_rarity"].items()):
-                if now - info["mint_time"] >= 86400:
-                    likes = get_message_likes(info["message_id"])
-                    rarity = min(10, max(1, likes // 2 + 1))
-                    game_data["nfts"][nft_id]["rarity"] = rarity
-                    game_data["nfts"][nft_id]["price"] = rarity * 50
-                    send_dm(game_data["nfts"][nft_id]["owner"], f"Your MemeNFT #{nft_id} rarity updated to {rarity} based on {likes} likes!")
-                    del game_data["pending_rarity"][nft_id]
-                    updated = True
-            if updated:
-                save_game_data(game_data)
-        except Exception as e:
-            logger.error(f"Rarity worker error: {e}")
-        time.sleep(3600)
-
-t_rarity = threading.Thread(target=rarity_update_worker, daemon=True)
-t_rarity.start()
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
