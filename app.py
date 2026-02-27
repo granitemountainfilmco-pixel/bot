@@ -1283,43 +1283,42 @@ def webhook():
         if user_id and text:
             increment_user_message_count(user_id, sender, text)
 
-# --- KARMA SYSTEM (REPLY BASED) ---
+# --- KARMA SYSTEM (KEYWORD BASED) ---
         if text:
-            clean_text = text.strip().lower()
-            if clean_text.startswith('+1') or clean_text.startswith('-1'):
-                replied = _find_replied_message(data)
+            clean_text = text.lower()
+            if 'upkarma' in clean_text or 'downkarma' in clean_text:
+                # Use your robust resolver instead of manual reply check
+                target = resolve_target_user(data, text)
                 
-                if not replied:
-                    logger.info("Karma attempt: No reply attachment found.")
-                
-                if replied and replied.get('user_id'):
-                    target_uid = str(replied.get('user_id'))
+                if target and user_id:
+                    target_uid, target_nick = target
                     sender_uid = str(user_id)
                     
-                    # Log the attempt for debugging
-                    logger.info(f"Karma attempt: {sender_uid} -> {target_uid}")
-
+                    # Prevent self-karma and invalid IDs
                     if target_uid != sender_uid and target_uid != "None":
                         with leaderboard_lock:
+                            # Initialize if target is new
                             if target_uid not in karma_history or not isinstance(karma_history[target_uid], dict):
                                 karma_history[target_uid] = {
                                     "score": 0, 
-                                    "name": replied.get('name', 'Unknown Member')
+                                    "name": target_nick
                                 }
                             
-                            change = 1 if clean_text.startswith('+1') else -1
+                            # Apply the change
+                            change = 1 if 'upkarma' in clean_text else -1
                             karma_history[target_uid]["score"] += change
-                            # Keep the name updated
-                            karma_history[target_uid]["name"] = replied.get('name', karma_history[target_uid]["name"])
                             
+                            # Ensure name stays updated in the history
+                            karma_history[target_uid]["name"] = target_nick
+                            
+                            # Persistence
                             save_karma_to_bin(karma_history)
                             safe_save_json("karma_history.json", karma_history)
                             
-                            logger.info(f"SUCCESS: {sender_uid} gave {change} to {target_uid} (New total: {karma_history[target_uid]['score']})")
+                            logger.info(f"Karma: {sender} gave {change} to {target_nick} (New total: {karma_history[target_uid]['score']})")
                     else:
-                        logger.info(f"Karma denied: Self-vote or invalid ID ({target_uid})")
+                        logger.info(f"Karma ignored: Self-vote or invalid ID (Target: {target_uid}, Sender: {sender_uid})")
                 
-                # Prevent +1 from triggering other word-based bots
                 return '', 200
         
         # LINK DELETION
