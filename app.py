@@ -1285,37 +1285,41 @@ def webhook():
 
 # --- KARMA SYSTEM (REPLY BASED) ---
         if text:
-            clean_text = text.strip()
-            if clean_text in ['+1', '-1']:
+            clean_text = text.strip().lower()
+            if clean_text.startswith('+1') or clean_text.startswith('-1'):
                 replied = _find_replied_message(data)
-                # Objectively verify we have a recipient and a sender
-                if replied and replied.get('user_id') and user_id:
+                
+                if not replied:
+                    logger.info("Karma attempt: No reply attachment found.")
+                
+                if replied and replied.get('user_id'):
                     target_uid = str(replied.get('user_id'))
                     sender_uid = str(user_id)
                     
-                    # Prevent self-karma and check for 'None' strings
+                    # Log the attempt for debugging
+                    logger.info(f"Karma attempt: {sender_uid} -> {target_uid}")
+
                     if target_uid != sender_uid and target_uid != "None":
                         with leaderboard_lock:
-                            # Initialize if target is new
                             if target_uid not in karma_history or not isinstance(karma_history[target_uid], dict):
                                 karma_history[target_uid] = {
                                     "score": 0, 
                                     "name": replied.get('name', 'Unknown Member')
                                 }
                             
-                            # Apply the change
-                            change = 1 if clean_text == '+1' else -1
+                            change = 1 if clean_text.startswith('+1') else -1
                             karma_history[target_uid]["score"] += change
+                            # Keep the name updated
+                            karma_history[target_uid]["name"] = replied.get('name', karma_history[target_uid]["name"])
                             
-                            # Persistence: Cloud first, then local
                             save_karma_to_bin(karma_history)
                             safe_save_json("karma_history.json", karma_history)
                             
-                            logger.info(f"Karma: {sender} gave {change} to {replied.get('name')} (New total: {karma_history[target_uid]['score']})")
+                            logger.info(f"SUCCESS: {sender_uid} gave {change} to {target_uid} (New total: {karma_history[target_uid]['score']})")
                     else:
-                        logger.info(f"Karma ignored: Self-vote or invalid ID (Target: {target_uid}, Sender: {sender_uid})")
+                        logger.info(f"Karma denied: Self-vote or invalid ID ({target_uid})")
                 
-                # We return here so we don't process "+1" as a normal message further down
+                # Prevent +1 from triggering other word-based bots
                 return '', 200
         
         # LINK DELETION
