@@ -1238,27 +1238,30 @@ def webhook():
         if user_id and text:
             increment_user_message_count(user_id, sender, text)
 
-        # Insert after you define 'text' and 'user_id'
+        # Check for +1 / -1
         if text and text.strip() in ['+1', '-1']:
             replied = _find_replied_message(data)
+            
             if replied:
-                target_uid = str(replied.get("user_id"))
+                # Capture ID and Name
+                target_uid = str(replied.get("user_id", ""))
+                target_name = replied.get("name", "Unknown")
                 giver_uid = str(user_id)
 
-                if target_uid and target_uid != giver_uid:
-                    # Initialize target if new
-                    if target_uid not in karma_history:
-                        karma_history[target_uid] = {}
-            
-                    current_contribution = karma_history[target_uid].get(giver_uid, 0)
-            
-                    # The Logic: Limit contribution, not total
-                    if text.strip() == '+1' and current_contribution < 10:
-                        karma_history[target_uid][giver_uid] = current_contribution + 1
-                        save_karma_to_bin(karma_history)
-                    elif text.strip() == '-1' and current_contribution > -10:
-                        karma_history[target_uid][giver_uid] = current_contribution - 1
-                        save_karma_to_bin(karma_history)
+                # OBJECTIVE FIX: If ID is missing or literally the string "None", STOP.
+                if not target_uid or target_uid == "None" or target_uid == "null":
+                    logger.warning("Karma skipped: Could not resolve a valid User ID from reply.")
+                    return '', 200
+
+                # Cache the name so the leaderboard isn't blank
+                if target_name != "Unknown":
+                    former_members[target_uid] = target_name
+                    save_json(former_members_file, former_members)
+
+                # Proceed with initialization
+                if target_uid not in karma_history:
+                    karma_history[target_uid] = {}
+                
 
 
         # LINK DELETION
