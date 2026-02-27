@@ -202,33 +202,33 @@ _initialize_daily_tracking()
 
 def load_karma_from_bin():
     url = f"https://api.jsonbin.io/v3/b/{JSONBIN_BIN_ID}/latest"
-    headers = {"X-Master-Key": JSONBIN_MASTER_KEY, "X-Bin-Meta": "false"}
+    headers = {
+        "X-Master-Key": JSONBIN_MASTER_KEY, 
+        "X-Bin-Meta": "false"  # This ensures we get only our data, no metadata
+    }
     try:
         resp = requests.get(url, headers=headers, timeout=8)
         if resp.status_code == 200:
             data = resp.json()
-            # If the bin is totally empty {}, return an empty dict
-            return data.get("karma", {}) if isinstance(data, dict) else {}
+            # Objectively check if it's the right format
+            if isinstance(data, dict):
+                return data
+        else:
+            logger.error(f"JSONBin Load Failed: {resp.status_code} - {resp.text}")
     except Exception as e:
         logger.error(f"Karma Load Error: {e}")
     return {}
 
 def save_karma_to_bin(karma_data):
-    # Objective: Force the correct schema {"karma": { ...data... }}
     url = f"https://api.jsonbin.io/v3/b/{JSONBIN_BIN_ID}"
     headers = {
         "X-Master-Key": JSONBIN_MASTER_KEY,
         "Content-Type": "application/json"
     }
-    
-    # We wrap the data in a "karma" key so the loader always finds it
-    payload = {"karma": karma_data}
-    
+    # Save the data directly without the "karma" wrapper to keep it clean
     try:
-        resp = requests.put(url, json=payload, headers=headers, timeout=10)
-        if resp.status_code == 200:
-            logger.info("Successfully synced Karma to JSONBin.")
-        else:
+        resp = requests.put(url, json=karma_data, headers=headers, timeout=10)
+        if resp.status_code != 200:
             logger.error(f"JSONBin Save Failed: {resp.status_code} - {resp.text}")
     except Exception as e:
         logger.error(f"Critical Karma Save Error: {e}")
