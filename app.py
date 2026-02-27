@@ -1238,29 +1238,39 @@ def webhook():
         if user_id and text:
             increment_user_message_count(user_id, sender, text)
 
-        # Check for +1 / -1
+# Check for +1 / -1
         if text and text.strip() in ['+1', '-1']:
             replied = _find_replied_message(data)
-            
             if replied:
-                # Capture ID and Name
-                target_uid = str(replied.get("user_id", ""))
-                target_name = replied.get("name", "Unknown")
-                giver_uid = str(user_id)
-
-                # OBJECTIVE FIX: If ID is missing or literally the string "None", STOP.
-                if not target_uid or target_uid == "None" or target_uid == "null":
-                    logger.warning("Karma skipped: Could not resolve a valid User ID from reply.")
-                    return '', 200
-
-                # Cache the name so the leaderboard isn't blank
-                if target_name != "Unknown":
-                    former_members[target_uid] = target_name
-                    save_json(former_members_file, former_members)
-
-                # Proceed with initialization
-                if target_uid not in karma_history:
-                    karma_history[target_uid] = {}
+                target_uid = str(replied.get('user_id'))
+                sender_uid = str(user_id)
+        
+                # 1. Prevent self-karma
+                if target_uid == sender_uid:
+                    send_message("You cannot give yourself karma.")
+                    return '', 200 # Properly indented inside the IF
+        
+                # 2. Logic to update the karma
+                with leaderboard_lock:
+                    # Initialize user if not exists
+                    if target_uid not in karma_history or not isinstance(karma_history[target_uid], dict):
+                        karma_history[target_uid] = {"score": 0, "name": replied.get('name', 'Unknown')}
+            
+                    # Increment or Decrement
+                    change = 1 if text.strip() == '+1' else -1
+                    karma_history[target_uid]["score"] = karma_history[target_uid].get("score", 0) + change
+                    
+                    # 3. Save to the JSON file
+                    # NOTE: You are using JSONBin for karma elsewhere; 
+                    # decide if you want safe_save_json (local) or save_karma_to_bin (remote).
+                    safe_save_json("karma_history.json", karma_history)
+                    save_karma_to_bin(karma_history) # Keeps cloud in sync
+            
+                    # 4. Confirm to the group
+                    new_score = karma_history[target_uid]["score"]
+                    send_message(f"Karma updated for {replied.get('name')}! New score: {new_score}")
+                
+                return '', 200
                 
 
 
@@ -1600,6 +1610,8 @@ start_leaderboard_thread_once()
 # -----------------------
 if __name__ == "__main__":
     try:
+        # Start the thread ONLY when running the script directly
+        start_leaderboard_thread_once() 
         logger.info(f"Starting Flask app on port {PORT}")
         app.run(host="0.0.0.0", port=PORT, debug=False, use_reloader=False)
     except Exception as e:
