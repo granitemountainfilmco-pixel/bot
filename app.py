@@ -31,7 +31,6 @@ ACCESS_TOKEN = os.getenv("ACCESS_TOKEN")  # Shared: GroupMe API token
 GROUP_ID = os.getenv("GROUP_ID")  # Shared: Group ID
 BOT_ID = os.getenv("BOT_ID")
 BOT_NAME = os.getenv("BOT_NAME", "ClankerBot")
-PORT = int(os.environ.get("PORT", 5000))
 ADMIN_IDS = [
     '119189324', '82717917', '124068433', '103258964', '123259855',
     '114848297', '121920211', '134245360', '113819798', '130463543',
