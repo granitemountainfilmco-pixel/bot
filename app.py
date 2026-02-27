@@ -207,29 +207,32 @@ def load_karma_from_bin():
     try:
         resp = requests.get(url, headers=headers, timeout=8)
         if resp.status_code == 200:
-            return resp.json().get("karma", {})
+            data = resp.json()
+            # If the bin is totally empty {}, return an empty dict
+            return data.get("karma", {}) if isinstance(data, dict) else {}
     except Exception as e:
         logger.error(f"Karma Load Error: {e}")
     return {}
 
 def save_karma_to_bin(karma_data):
-    """Saves the current karma state to JSONBin."""
+    # Objective: Force the correct schema {"karma": { ...data... }}
     url = f"https://api.jsonbin.io/v3/b/{JSONBIN_BIN_ID}"
     headers = {
-        "X-Master-Key": JSONBIN_MASTER_KEY, 
+        "X-Master-Key": JSONBIN_MASTER_KEY,
         "Content-Type": "application/json"
     }
+    
+    # We wrap the data in a "karma" key so the loader always finds it
+    payload = {"karma": karma_data}
+    
     try:
-        # We send the data directly. 
-        # Note: Ensure your load function matches this structure!
-        resp = requests.put(url, json={"karma": karma_data}, headers=headers, timeout=10)
+        resp = requests.put(url, json=payload, headers=headers, timeout=10)
         if resp.status_code == 200:
-            logger.info("Karma successfully backed up to JSONBin.")
+            logger.info("Successfully synced Karma to JSONBin.")
         else:
             logger.error(f"JSONBin Save Failed: {resp.status_code} - {resp.text}")
     except Exception as e:
-        logger.error(f"Karma Save Error: {e}")
-
+        logger.error(f"Critical Karma Save Error: {e}")
 def sync_karma():
     """Force a refresh from JSONBin to memory."""
     global karma_history
