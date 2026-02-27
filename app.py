@@ -201,9 +201,7 @@ def _initialize_daily_tracking():
 
 _initialize_daily_tracking()
 
-# Karma System
 def load_karma_from_bin():
-    # Adding /latest ensures you get the most recent version of the data
     url = f"https://api.jsonbin.io/v3/b/{JSONBIN_BIN_ID}/latest"
     headers = {"X-Master-Key": JSONBIN_MASTER_KEY, "X-Bin-Meta": "false"}
     try:
@@ -214,16 +212,15 @@ def load_karma_from_bin():
         logger.error(f"Karma Load Error: {e}")
     return {}
 
-karma_history: Dict[str, Dict[str, int]] = load_karma_from_bin()
-
 def save_karma_to_bin(karma_data):
     url = f"https://api.jsonbin.io/v3/b/{JSONBIN_BIN_ID}"
     headers = {"X-Master-Key": JSONBIN_MASTER_KEY, "Content-Type": "application/json"}
     try:
-        # We wrap it in a root 'karma' key to match our load logic
         requests.put(url, json={"karma": karma_data}, headers=headers, timeout=10)
     except Exception as e:
         logger.error(f"Karma Save Error: {e}")
+
+karma_history: Dict[str, Dict[str, int]] = load_karma_from_bin()
 
 def get_help_message(is_admin: bool) -> str:
     if is_admin:
