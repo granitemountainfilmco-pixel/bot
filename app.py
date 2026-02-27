@@ -213,12 +213,32 @@ def load_karma_from_bin():
     return {}
 
 def save_karma_to_bin(karma_data):
+    """Saves the current karma state to JSONBin."""
     url = f"https://api.jsonbin.io/v3/b/{JSONBIN_BIN_ID}"
-    headers = {"X-Master-Key": JSONBIN_MASTER_KEY, "Content-Type": "application/json"}
+    headers = {
+        "X-Master-Key": JSONBIN_MASTER_KEY, 
+        "Content-Type": "application/json"
+    }
     try:
-        requests.put(url, json={"karma": karma_data}, headers=headers, timeout=10)
+        # We send the data directly. 
+        # Note: Ensure your load function matches this structure!
+        resp = requests.put(url, json={"karma": karma_data}, headers=headers, timeout=10)
+        if resp.status_code == 200:
+            logger.info("Karma successfully backed up to JSONBin.")
+        else:
+            logger.error(f"JSONBin Save Failed: {resp.status_code} - {resp.text}")
     except Exception as e:
         logger.error(f"Karma Save Error: {e}")
+
+def sync_karma():
+    """Force a refresh from JSONBin to memory."""
+    global karma_history
+    cloud_data = load_karma_from_bin()
+    if cloud_data:
+        karma_history = cloud_data
+        # Sync the local file to match the cloud truth
+        safe_save_json("karma_history.json", karma_history)
+        logger.info("Memory and local cache synced with JSONBin.")
 
 karma_history: Dict[str, Dict[str, int]] = load_karma_from_bin()
 
@@ -1251,33 +1271,35 @@ def webhook():
             increment_user_message_count(user_id, sender, text)
 
 # --- Corrected Karma Block ---
-        if text and text.strip() in ['+1', '-1']:
-            replied = _find_replied_message(data)
-            
-            # CHECK: Only proceed if we actually found a person in the reply
-            if replied and replied.get('user_id'):
-                target_uid = str(replied.get('user_id'))
-                sender_uid = str(user_id)
-                target_name = replied.get('name') or "Unknown"
+if text and text.strip() in ['+1', '-1']:
+    replied = _find_replied_message(data)
+    
+    if replied and replied.get('user_id'):
+        target_uid = str(replied.get('user_id'))
+        sender_uid = str(user_id)
+        target_name = replied.get('name') or "Unknown"
 
-                # 1. Prevent self-karma (SILENTLY)
-                if target_uid == sender_uid:
-                    # Removed the send_message here to keep it quiet
-                    return '', 200
+        if target_uid == sender_uid:
+            return '', 200
+
+        with leaderboard_lock:
+            # IMPORTANT: Use the global variable
+            global karma_history 
+            
+            if target_uid not in karma_history or not isinstance(karma_history[target_uid], dict):
+                karma_history[target_uid] = {"score": 0, "name": target_name}
+    
+            change = 1 if text.strip() == '+1' else -1
+            karma_history[target_uid]["score"] += change
+            karma_history[target_uid]["name"] = target_name # Keep name updated
+            
+            # Save locally
+            safe_save_json("karma_history.json", karma_history)
+            # Save to Cloud
+            save_karma_to_bin(karma_history)
+    
+        return '', 200
         
-                # 2. Update logic
-                with leaderboard_lock:
-                    if target_uid not in karma_history or not isinstance(karma_history[target_uid], dict):
-                        karma_history[target_uid] = {"score": 0, "name": target_name}
-            
-                    change = 1 if text.strip() == '+1' else -1
-                    karma_history[target_uid]["score"] += change
-                    
-                    safe_save_json("karma_history.json", karma_history)
-                    save_karma_to_bin(karma_history)
-            
-                # We return here so the bot doesn't try to process "+1" as a normal command
-                return '', 200
         # LINK DELETION
         if user_id and message_id:
             if str(user_id) not in ADMIN_IDS:
