@@ -84,7 +84,6 @@ API_URL = "https://api.groupme.com/v3"
 # In-memory caches
 user_swear_counts: Dict[str, int] = {}
 banned_users: Dict[str, str] = {}
-karma_history: Dict[str, Dict[str, int]] = load_karma_from_bin()
 former_members: Dict[str, str] = {}
 user_strikes: Dict[str, int] = {}
 muted_users: Dict[str, float] = {}  # Changed to float for time.time()
@@ -214,6 +213,8 @@ def load_karma_from_bin():
     except Exception as e:
         logger.error(f"Karma Load Error: {e}")
     return {}
+
+karma_history: Dict[str, Dict[str, int]] = load_karma_from_bin()
 
 def save_karma_to_bin(karma_data):
     url = f"https://api.jsonbin.io/v3/b/{JSONBIN_BIN_ID}"
