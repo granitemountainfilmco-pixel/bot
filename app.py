@@ -32,7 +32,6 @@ GROUP_ID = os.getenv("GROUP_ID")  # Shared: Group ID
 BOT_ID = os.getenv("BOT_ID")
 BOT_NAME = os.getenv("BOT_NAME", "ClankerBot")
 PORT = int(os.environ.get("PORT", 5000))
-SELF_PING = os.getenv("KEEP_ALIVE_SELF_PING", "true").lower() in ("1", "true", "yes")
 ADMIN_IDS = [
     '119189324', '82717917', '124068433', '103258964', '123259855',
     '114848297', '121920211', '134245360', '113819798', '130463543',
@@ -1594,22 +1593,6 @@ def webhook():
 # -----------------------
 start_leaderboard_thread_once()
 
-# -----------------------
-# Keep-Alive Ping
-# -----------------------
-def keep_alive():
-    if not SELF_PING:
-        return
-    def ping():
-        while True:
-            try:
-                requests.get(f"https://{request.host}", timeout=5)
-                logger.info("Self-ping sent to keep alive.")
-            except:
-                pass
-            time.sleep(600)
-    t = threading.Thread(target=ping, daemon=True)
-    t.start()
 
 # -----------------------
 # Flask App Run
