@@ -85,6 +85,7 @@ API_URL = "https://api.groupme.com/v3"
 # In-memory caches
 user_swear_counts: Dict[str, int] = {}
 banned_users: Dict[str, str] = {}
+karma_history: Dict[str, Dict[str, int]] = load_karma_from_bin()
 former_members: Dict[str, str] = {}
 user_strikes: Dict[str, int] = {}
 muted_users: Dict[str, float] = {}  # Changed to float for time.time()
@@ -201,6 +202,28 @@ def _initialize_daily_tracking():
         logger.info("Initialized new last_message_by_user for today.")
 
 _initialize_daily_tracking()
+
+# Karma System
+def load_karma_from_bin():
+    # Adding /latest ensures you get the most recent version of the data
+    url = f"https://api.jsonbin.io/v3/b/{JSONBIN_BIN_ID}/latest"
+    headers = {"X-Master-Key": JSONBIN_MASTER_KEY, "X-Bin-Meta": "false"}
+    try:
+        resp = requests.get(url, headers=headers, timeout=8)
+        if resp.status_code == 200:
+            return resp.json().get("karma", {})
+    except Exception as e:
+        logger.error(f"Karma Load Error: {e}")
+    return {}
+
+def save_karma_to_bin(karma_data):
+    url = f"https://api.jsonbin.io/v3/b/{JSONBIN_BIN_ID}"
+    headers = {"X-Master-Key": JSONBIN_MASTER_KEY, "Content-Type": "application/json"}
+    try:
+        # We wrap it in a root 'karma' key to match our load logic
+        requests.put(url, json={"karma": karma_data}, headers=headers, timeout=10)
+    except Exception as e:
+        logger.error(f"Karma Save Error: {e}")
 
 def get_help_message(is_admin: bool) -> str:
     if is_admin:
@@ -1078,34 +1101,55 @@ def increment_user_message_count(user_id: str, username: str, text: str) -> None
 
 def _build_leaderboard_message(top_n: int = 3) -> str:
     try:
+        # 1. Ensure keys exist for message counts
         _ensure_today_keys()
-
+        
         with leaderboard_lock:
-            if not daily_message_counts:
-                return "Daily Unemployed Leaders:\nNo messages recorded today."
-
+            # 2. Get member names for mapping IDs to Nicknames
             members = get_group_members()
             id_to_nick = {str(m.get("user_id")): m.get("nickname") for m in members if m.get("user_id")}
+            # Fallback for people who left the group but are still in the data
             fallback = {str(k): v for k, v in former_members.items()}
 
-            sorted_items = sorted(
-                daily_message_counts.items(),
-                key=lambda kv: (-int(kv[1]), kv[0])
-            )
-
-            lines = ["Daily Unemployed Leaders:"]
-            rank = 1
-
-            for uid, cnt in sorted_items[:top_n]:
+            # --- SECTION A: MESSAGE COUNTS (Daily) ---
+            sorted_msgs = sorted(daily_message_counts.items(), key=lambda kv: (-int(kv[1]), kv[0]))
+            lines = ["**Daily Unemployed Leaders:**"]
+            for rank, (uid, cnt) in enumerate(sorted_msgs[:top_n], 1):
                 name = id_to_nick.get(uid) or fallback.get(uid) or f"User {uid}"
                 lines.append(f"{rank}. {name} ({cnt})")
-                rank += 1
+
+            # --- SECTION B: KARMA / REP (All-Time) ---
+            lines.append("\n**Top Rep (Total Karma):**")
+            
+            # Calculate total sums from the nested history {target: {giver: score}}
+            total_karma_scores = {}
+            for target_uid, givers in karma_history.items():
+                total_karma_scores[target_uid] = sum(givers.values())
+
+            # Filter out zeros and sort by score descending
+            active_karma = {k: v for k, v in total_karma_scores.items() if v != 0}
+            sorted_karma = sorted(active_karma.items(), key=lambda kv: (-kv[1], kv[0]))
+            
+            if not sorted_karma:
+                lines.append("No one has any street cred yet.")
+            else:
+                # We show Top 5 for Karma to give more people a chance to see their names
+                for rank, (uid, score) in enumerate(sorted_karma[:5], 1):
+                    name = id_to_nick.get(uid) or fallback.get(uid) or f"User {uid}"
+                    
+                    # Objective Aesthetic: Higher tiers get better emojis
+                    if score >= 30: emoji = "👑" 
+                    elif score >= 15: emoji = "💎"
+                    elif score > 0: emoji = "🔥"
+                    else: emoji = "💀" # Negative karma
+                    
+                    lines.append(f"{rank}. {name}: {score} {emoji}")
 
             return "\n".join(lines)
-
+            
     except Exception as e:
         logger.error(f"Error building leaderboard: {e}")
-        return "Daily Unemployed Leaders:\nError."
+        return "⚠️ Error generating leaderboard."
 
 
 def _reset_daily_counts():
@@ -1196,6 +1240,28 @@ def webhook():
         # DAILY COUNT
         if user_id and text:
             increment_user_message_count(user_id, sender, text)
+
+        # Insert after you define 'text' and 'user_id'
+        if text and text.strip() in ['+1', '-1']:
+            replied = _find_replied_message(data)
+            if replied:
+                target_uid = str(replied.get("user_id"))
+                giver_uid = str(user_id)
+
+                if target_uid and target_uid != giver_uid:
+                    # Initialize target if new
+                    if target_uid not in karma_history:
+                        karma_history[target_uid] = {}
+            
+                    current_contribution = karma_history[target_uid].get(giver_uid, 0)
+            
+                    # The Logic: Limit contribution, not total
+                    if text.strip() == '+1' and current_contribution < 10:
+                        karma_history[target_uid][giver_uid] = current_contribution + 1
+                        save_karma_to_bin(karma_history)
+                    elif text.strip() == '-1' and current_contribution > -10:
+                        karma_history[target_uid][giver_uid] = current_contribution - 1
+                        save_karma_to_bin(karma_history)
 
 
         # LINK DELETION
