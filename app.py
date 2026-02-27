@@ -1278,9 +1278,6 @@ def webhook():
                     safe_save_json("karma_history.json", karma_history)
                     save_karma_to_bin(karma_history) # Keeps cloud in sync
             
-                    # 4. Confirm to the group
-                    new_score = karma_history[target_uid]["score"]
-                    send_message(f"Karma updated for {replied.get('name')}! New score: {new_score}")
                 
                 return '', 200
                 
