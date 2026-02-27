@@ -1120,6 +1120,13 @@ def _build_leaderboard_message(top_n: int = 3) -> str:
     try:
         _ensure_today_keys()
         
+        # --- THE SYNC STEP ---
+        # Pull the latest truth from JSONBin before displaying
+        global karma_history
+        refreshed_data = load_karma_from_bin()
+        if refreshed_data:
+            karma_history = refreshed_data
+
         with leaderboard_lock:
             members = get_group_members()
             id_to_nick = {str(m.get("user_id")): m.get("nickname") for m in members if m.get("user_id")}
@@ -1156,7 +1163,10 @@ def _build_leaderboard_message(top_n: int = 3) -> str:
                 lines.append("No one has positive street cred yet.")
             else:
                 for rank, (uid, score) in enumerate(sorted_positive[:5], 1):
-                    name = id_to_nick.get(uid) or fallback.get(uid) or f"User {uid}"
+                    # Priority: Group Nickname > JSONBin Saved Name > Fallback ID
+                    saved_name = karma_history.get(uid, {}).get("name") if isinstance(karma_history.get(uid), dict) else None
+                    name = id_to_nick.get(uid) or saved_name or fallback.get(uid) or f"User {uid}"
+                    
                     if score >= 30: emoji = "👑" 
                     elif score >= 15: emoji = "💎"
                     else: emoji = "🔥"
@@ -1165,14 +1175,14 @@ def _build_leaderboard_message(top_n: int = 3) -> str:
             # --- SECTION C: HALL OF SHAME (Negative) ---
             lines.append("\n**Hall of Shame (Negative Karma):**")
             negative_karma = {k: v for k, v in total_karma_scores.items() if v < 0}
-            # Sort by the lowest number (most negative)
             sorted_negative = sorted(negative_karma.items(), key=lambda kv: (kv[1], kv[0]))
 
             if not sorted_negative:
                 lines.append("No one is in the red... yet.")
             else:
                 for rank, (uid, score) in enumerate(sorted_negative[:5], 1):
-                    name = id_to_nick.get(uid) or fallback.get(uid) or f"User {uid}"
+                    saved_name = karma_history.get(uid, {}).get("name") if isinstance(karma_history.get(uid), dict) else None
+                    name = id_to_nick.get(uid) or saved_name or fallback.get(uid) or f"User {uid}"
                     lines.append(f"{rank}. {name}: {score} 🤡")
 
             return "\n".join(lines)
