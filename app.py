@@ -1621,20 +1621,13 @@ def webhook():
         logger.error(f"Webhook error: {e}")
         return '', 500
 
-# -----------------------
-# Start Leaderboard Thread
-# -----------------------
-start_leaderboard_thread_once()
 
 
 # -----------------------
 # Flask App Run
 # -----------------------
 if __name__ == "__main__":
-    try:
-        # Start the thread ONLY when running the script directly
-        start_leaderboard_thread_once() 
-        logger.info(f"Starting Flask app on port {PORT}")
-        app.run(host="0.0.0.0", port=PORT, debug=False, use_reloader=False)
-    except Exception as e:
-        logger.error(f"Failed to start server: {e}")
+    start_leaderboard_thread_once() 
+    port = int(os.environ.get("PORT", 5000))
+    logger.info(f"Starting Flask app on port {port}")
+    app.run(host="0.0.0.0", port=port)
