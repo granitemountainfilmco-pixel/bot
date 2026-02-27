@@ -1250,39 +1250,34 @@ def webhook():
         if user_id and text:
             increment_user_message_count(user_id, sender, text)
 
-# Check for +1 / -1
+# --- Corrected Karma Block ---
         if text and text.strip() in ['+1', '-1']:
             replied = _find_replied_message(data)
-            if replied:
+            
+            # CHECK: Only proceed if we actually found a person in the reply
+            if replied and replied.get('user_id'):
                 target_uid = str(replied.get('user_id'))
                 sender_uid = str(user_id)
-        
-                # 1. Prevent self-karma
+                target_name = replied.get('name') or "Unknown"
+
+                # 1. Prevent self-karma (SILENTLY)
                 if target_uid == sender_uid:
-                    send_message("You cannot give yourself karma.")
-                    return '', 200 # Properly indented inside the IF
+                    # Removed the send_message here to keep it quiet
+                    return '', 200
         
-                # 2. Logic to update the karma
+                # 2. Update logic
                 with leaderboard_lock:
-                    # Initialize user if not exists
                     if target_uid not in karma_history or not isinstance(karma_history[target_uid], dict):
-                        karma_history[target_uid] = {"score": 0, "name": replied.get('name', 'Unknown')}
+                        karma_history[target_uid] = {"score": 0, "name": target_name}
             
-                    # Increment or Decrement
                     change = 1 if text.strip() == '+1' else -1
-                    karma_history[target_uid]["score"] = karma_history[target_uid].get("score", 0) + change
+                    karma_history[target_uid]["score"] += change
                     
-                    # 3. Save to the JSON file
-                    # NOTE: You are using JSONBin for karma elsewhere; 
-                    # decide if you want safe_save_json (local) or save_karma_to_bin (remote).
                     safe_save_json("karma_history.json", karma_history)
-                    save_karma_to_bin(karma_history) # Keeps cloud in sync
+                    save_karma_to_bin(karma_history)
             
-                
+                # We return here so the bot doesn't try to process "+1" as a normal command
                 return '', 200
-                
-
-
         # LINK DELETION
         if user_id and message_id:
             if str(user_id) not in ADMIN_IDS:
