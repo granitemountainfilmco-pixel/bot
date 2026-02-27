@@ -1098,52 +1098,52 @@ def increment_user_message_count(user_id: str, username: str, text: str) -> None
 
 def _build_leaderboard_message(top_n: int = 3) -> str:
     try:
-        # 1. Ensure keys exist for message counts
         _ensure_today_keys()
         
         with leaderboard_lock:
-            # 2. Get member names for mapping IDs to Nicknames
             members = get_group_members()
             id_to_nick = {str(m.get("user_id")): m.get("nickname") for m in members if m.get("user_id")}
-            # Fallback for people who left the group but are still in the data
             fallback = {str(k): v for k, v in former_members.items()}
 
-            # --- SECTION A: MESSAGE COUNTS (Daily) ---
+            # --- SECTION A: DAILY MESSAGES ---
             sorted_msgs = sorted(daily_message_counts.items(), key=lambda kv: (-int(kv[1]), kv[0]))
             lines = ["**Daily Unemployed Leaders:**"]
             for rank, (uid, cnt) in enumerate(sorted_msgs[:top_n], 1):
                 name = id_to_nick.get(uid) or fallback.get(uid) or f"User {uid}"
                 lines.append(f"{rank}. {name} ({cnt})")
 
-            # --- SECTION B: KARMA / REP (All-Time) ---
+            # --- SECTION B: KARMA / REP ---
             lines.append("\n**Top Rep (Total Karma):**")
-            
-            # Calculate total sums from the nested history {target: {giver: score}}
             total_karma_scores = {}
-            for target_uid, givers in karma_history.items():
-                total_karma_scores[target_uid] = sum(givers.values())
+            
+            for uid, val in karma_history.items():
+                # OBJECTIVE FIX: Skip the "None" user so it doesn't show up
+                if uid == "None" or not uid:
+                    continue
+                
+                # CRASH PROTECTION: Handle both number (flat) and dict (nested)
+                if isinstance(val, dict):
+                    total_karma_scores[uid] = sum(val.values())
+                else:
+                    total_karma_scores[uid] = int(val)
 
-            # Filter out zeros and sort by score descending
             active_karma = {k: v for k, v in total_karma_scores.items() if v != 0}
             sorted_karma = sorted(active_karma.items(), key=lambda kv: (-kv[1], kv[0]))
             
             if not sorted_karma:
                 lines.append("No one has any street cred yet.")
             else:
-                # We show Top 5 for Karma to give more people a chance to see their names
                 for rank, (uid, score) in enumerate(sorted_karma[:5], 1):
                     name = id_to_nick.get(uid) or fallback.get(uid) or f"User {uid}"
                     
-                    # Objective Aesthetic: Higher tiers get better emojis
                     if score >= 30: emoji = "👑" 
                     elif score >= 15: emoji = "💎"
                     elif score > 0: emoji = "🔥"
-                    else: emoji = "💀" # Negative karma
+                    else: emoji = "💀"
                     
                     lines.append(f"{rank}. {name}: {score} {emoji}")
 
             return "\n".join(lines)
-            
     except Exception as e:
         logger.error(f"Error building leaderboard: {e}")
         return "⚠️ Error generating leaderboard."
