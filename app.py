@@ -1270,35 +1270,21 @@ def webhook():
         if user_id and text:
             increment_user_message_count(user_id, sender, text)
 
-# --- Corrected Karma Block ---
-if text and text.strip() in ['+1', '-1']:
-    replied = _find_replied_message(data)
-    
-    if replied and replied.get('user_id'):
-        target_uid = str(replied.get('user_id'))
-        sender_uid = str(user_id)
-        target_name = replied.get('name') or "Unknown"
-
-        if target_uid == sender_uid:
-            return '', 200
-
-        with leaderboard_lock:
-            # IMPORTANT: Use the global variable
-            global karma_history 
-            
-            if target_uid not in karma_history or not isinstance(karma_history[target_uid], dict):
-                karma_history[target_uid] = {"score": 0, "name": target_name}
-    
-            change = 1 if text.strip() == '+1' else -1
-            karma_history[target_uid]["score"] += change
-            karma_history[target_uid]["name"] = target_name # Keep name updated
-            
-            # Save locally
-            safe_save_json("karma_history.json", karma_history)
-            # Save to Cloud
-            save_karma_to_bin(karma_history)
-    
-        return '', 200
+        if text and text.strip() in ['+1', '-1']:
+            replied = _find_replied_message(data)
+            if replied and replied.get('user_id'):
+                target_uid = str(replied.get('user_id'))
+                if target_uid != str(user_id): # No self-karma
+                    with leaderboard_lock:
+                        if target_uid not in karma_history or not isinstance(karma_history[target_uid], dict):
+                            karma_history[target_uid] = {"score": 0, "name": replied.get('name', 'Unknown')}
+                        
+                        change = 1 if text.strip() == '+1' else -1
+                        karma_history[target_uid]["score"] += change
+                        
+                        save_karma_to_bin(karma_history) # Save to JSONBin
+                        safe_save_json("karma_history.json", karma_history) # Local backup
+                return '', 200
         
         # LINK DELETION
         if user_id and message_id:
