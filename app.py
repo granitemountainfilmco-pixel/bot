@@ -1112,36 +1112,48 @@ def _build_leaderboard_message(top_n: int = 3) -> str:
                 name = id_to_nick.get(uid) or fallback.get(uid) or f"User {uid}"
                 lines.append(f"{rank}. {name} ({cnt})")
 
-            # --- SECTION B: KARMA / REP ---
-            lines.append("\n**Top Rep (Total Karma):**")
+            # --- PRE-PROCESS KARMA DATA ---
             total_karma_scores = {}
-            
             for uid, val in karma_history.items():
-                # OBJECTIVE FIX: Skip the "None" user so it doesn't show up
                 if uid == "None" or not uid:
                     continue
                 
-                # CRASH PROTECTION: Handle both number (flat) and dict (nested)
+                # Handle nested dict {"score": X, "name": Y} vs flat integer
                 if isinstance(val, dict):
-                    total_karma_scores[uid] = sum(val.values())
+                    total_karma_scores[uid] = val.get("score", 0)
                 else:
-                    total_karma_scores[uid] = int(val)
+                    try:
+                        total_karma_scores[uid] = int(val)
+                    except (ValueError, TypeError):
+                        total_karma_scores[uid] = 0
 
-            active_karma = {k: v for k, v in total_karma_scores.items() if v != 0}
-            sorted_karma = sorted(active_karma.items(), key=lambda kv: (-kv[1], kv[0]))
+            # --- SECTION B: TOP REP (Positive) ---
+            lines.append("\n**Top Rep (Total Karma):**")
+            positive_karma = {k: v for k, v in total_karma_scores.items() if v > 0}
+            sorted_positive = sorted(positive_karma.items(), key=lambda kv: (-kv[1], kv[0]))
             
-            if not sorted_karma:
-                lines.append("No one has any street cred yet.")
+            if not sorted_positive:
+                lines.append("No one has positive street cred yet.")
             else:
-                for rank, (uid, score) in enumerate(sorted_karma[:5], 1):
+                for rank, (uid, score) in enumerate(sorted_positive[:5], 1):
                     name = id_to_nick.get(uid) or fallback.get(uid) or f"User {uid}"
-                    
                     if score >= 30: emoji = "👑" 
                     elif score >= 15: emoji = "💎"
-                    elif score > 0: emoji = "🔥"
-                    else: emoji = "💀"
-                    
+                    else: emoji = "🔥"
                     lines.append(f"{rank}. {name}: {score} {emoji}")
+
+            # --- SECTION C: HALL OF SHAME (Negative) ---
+            lines.append("\n**Hall of Shame (Negative Karma):**")
+            negative_karma = {k: v for k, v in total_karma_scores.items() if v < 0}
+            # Sort by the lowest number (most negative)
+            sorted_negative = sorted(negative_karma.items(), key=lambda kv: (kv[1], kv[0]))
+
+            if not sorted_negative:
+                lines.append("No one is in the red... yet.")
+            else:
+                for rank, (uid, score) in enumerate(sorted_negative[:5], 1):
+                    name = id_to_nick.get(uid) or fallback.get(uid) or f"User {uid}"
+                    lines.append(f"{rank}. {name}: {score} 🤡")
 
             return "\n".join(lines)
     except Exception as e:
