@@ -1549,11 +1549,8 @@ def keep_alive():
 # Flask App Run
 # -----------------------
 if __name__ == "__main__":
-    keep_alive()
-
     try:
-        port = int(os.environ.get("PORT", 5000))
-        logger.info(f"Starting Flask app on port {port}")
-        app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
+        logger.info(f"Starting Flask app on port {PORT}")
+        app.run(host="0.0.0.0", port=PORT, debug=False, use_reloader=False)
     except Exception as e:
         logger.error(f"Failed to start server: {e}")
