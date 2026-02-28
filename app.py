@@ -489,6 +489,24 @@ def get_user_membership_id(user_id):
         logger.exception(f"Error getting membership ID for {user_id}: {e}")
         return None
 
+def _get_user_id_from_reply(data: Dict[str, Any]) -> Optional[Tuple[str, str]]:
+    """Explicitly fetches the original message to get the correct User ID."""
+    for att in data.get("attachments", []):
+        if att.get("type") == "reply":
+            reply_msg_id = att.get("base_reply_id")
+            group_id = data.get("group_id")
+            
+            # Call GroupMe API to get the actual message details
+            url = f"https://api.groupme.com/v3/groups/{group_id}/messages/{reply_msg_id}?token={ACCESS_TOKEN}"
+            response = requests.get(url)
+            
+            if response.status_code == 200:
+                msg_data = response.json().get("response", {}).get("message", {})
+                u_id = str(msg_data.get("user_id"))
+                u_name = msg_data.get("name")
+                return u_id, u_name
+    return None
+
 def _find_replied_message(data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     for att in data.get("attachments", []):
         if att.get("type") == "reply":
@@ -1283,47 +1301,30 @@ def webhook():
         if user_id and text:
             increment_user_message_count(user_id, sender, text)
 
-# --- KARMA SYSTEM (RELIABLE RESOLUTION) ---
+# --- KARMA SYSTEM (REPLY-FETCH BASED) ---
         if text:
             text_lower = text.lower()
             if 'upkarma' in text_lower or 'downkarma' in text_lower:
-                target_uid = None
-                target_nick = None
-
-                # STEP 1: Check for a Reply (Direct ID extraction)
-                replied_info = _find_replied_message(data)
-                if replied_info and replied_info.get("user_id"):
-                    target_uid = replied_info["user_id"]
-                    target_nick = replied_info.get("name", "Unknown Member")
-                    logger.info(f"Karma: Resolved target {target_uid} via Reply Metadata")
-
-                # STEP 2: Fallback to Mentions/Fuzzy if not a reply
-                else:
-                    resolved = resolve_target_user(data, text)
-                    if resolved:
-                        target_uid, target_nick = resolved
-                        logger.info(f"Karma: Resolved target {target_uid} via Mention/Fuzzy")
-
-                # STEP 3: Apply the Karma
-                if target_uid and target_uid != "None":
+                # Get the ID directly from the source message, not the nickname search
+                resolved = _get_user_id_from_reply(data)
+                
+                if resolved:
+                    target_uid, target_nick = resolved
                     sender_uid = str(user_id)
-                    if target_uid == sender_uid:
-                        logger.info("Karma denied: Self-vote.")
-                        return '', 200
-
-                    with leaderboard_lock:
-                        if target_uid not in karma_history or not isinstance(karma_history[target_uid], dict):
-                            karma_history[target_uid] = {"score": 0, "name": target_nick}
-                        
-                        change = 1 if 'upkarma' in text_lower else -1
-                        karma_history[target_uid]["score"] += change
-                        karma_history[target_uid]["name"] = target_nick
-                        
-                        save_karma_to_bin(karma_history)
-                        safe_save_json("karma_history.json", karma_history)
-                        logger.info(f"SUCCESS: {target_nick} is now at {karma_history[target_uid]['score']}")
-                else:
-                    logger.warning(f"Karma Error: Could not resolve target ID for text: {text}")
+                    
+                    if target_uid != sender_uid and target_uid != "None":
+                        with leaderboard_lock:
+                            if target_uid not in karma_history:
+                                karma_history[target_uid] = {"score": 0, "name": target_nick}
+                            
+                            change = 1 if 'upkarma' in text_lower else -1
+                            karma_history[target_uid]["score"] += change
+                            
+                            save_karma_to_bin(karma_history)
+                            safe_save_json("karma_history.json", karma_history)
+                            logger.info(f"Karma Success: {target_nick} is now {karma_history[target_uid]['score']}")
+                    else:
+                        logger.info("Karma ignored: Self-vote or invalid.")
                 
                 return '', 200
         
