@@ -1314,36 +1314,32 @@ def webhook():
             # Do NOT return — allow normal processing to continue
 
         
-        # === SECRET KARMA VIA EDIT (system message based, single edit) ===
-        if sender_type == "system" and "edited to:" in text_lower:
-            # Extract the new edited text
-            m = re.search(r'edited to:\s*[“"](.+?)[”"]', text, re.IGNORECASE)
+        # === ADMIN KARMA EDIT (reply-based, reliable) ===
+        if user_id in ADMIN_IDS:
+            m = re.search(r'^karma\s*([+-]\s*\d+)', text.lower())
             if m:
-                new_text = m.group(1).strip().lower()
+                delta = int(m.group(1).replace(" ", ""))
         
-                # Only admins can use this
-                if new_text.startswith("karma ") and any(admin_id in text for admin_id in ADMIN_IDS):
+                # Must be replying to a message
+                replied = _find_replied_message(data)
+                if replied:
+                    target_uid = str(replied["user_id"])
+                    target_name = replied.get("name", "Unknown")
         
-                    # Extract +N or -N
-                    k = re.search(r'karma\s*([+-]\d+)', new_text)
-                    if k:
-                        change = int(k.group(1))
+                    with leaderboard_lock:
+                        if target_uid not in karma_history:
+                            karma_history[target_uid] = {"score": 0, "name": target_name}
         
-                        # Get target user from reply (must have replied originally)
-                        resolved = _get_user_id_from_reply(data)
-                        if resolved:
-                            target_uid, target_nick = resolved
+                        karma_history[target_uid]["score"] += delta
         
-                            # Apply karma silently
-                            with leaderboard_lock:
-                                if target_uid not in karma_history:
-                                    karma_history[target_uid] = {"score": 0, "name": target_nick}
+                        save_karma_to_bin(karma_history)
+                        safe_save_json("karma_history.json", karma_history)
         
-                                karma_history[target_uid]["score"] += change
-                                save_karma_to_bin(karma_history)
-                                safe_save_json("karma_history.json", karma_history)
+                    send_system_message(
+                        f"Karma updated for {target_name}: {delta:+d} (now {karma_history[target_uid]['score']})"
+                    )
         
-            return '', 200
+                return '', 200
 
         # SYSTEM MESSAGES
         if sender_type == "system" or is_system_message(data):
