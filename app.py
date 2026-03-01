@@ -1314,46 +1314,37 @@ def webhook():
             # Do NOT return — allow normal processing to continue
 
         
-        # === SECRET KARMA EDIT COMMAND (system edit detection) ===
+        # === SECRET KARMA VIA EDIT (system message based, single edit) ===
         if sender_type == "system" and "edited to:" in text_lower:
-            # Extract new text from system message
+            # Extract the new edited text
             m = re.search(r'edited to:\s*[“"](.+?)[”"]', text, re.IGNORECASE)
             if m:
                 new_text = m.group(1).strip().lower()
         
                 # Only admins can use this
-                # And only if the edited text starts with "karma "
-                if any(admin_id in text for admin_id in ADMIN_IDS) and new_text.startswith("karma "):
+                if new_text.startswith("karma ") and any(admin_id in text for admin_id in ADMIN_IDS):
         
-                    # Count edits for this message
-                    count = edited_message_counts.get(message_id, 0) + 1
-                    edited_message_counts[message_id] = count
+                    # Extract +N or -N
+                    k = re.search(r'karma\s*([+-]\d+)', new_text)
+                    if k:
+                        change = int(k.group(1))
         
-                    if count >= KARMAEDIT:
-                        # Extract +N or -N
-                        k = re.search(r'karma\s*([+-]\d+)', new_text)
-                        if k:
-                            change = int(k.group(1))
+                        # Get target user from reply (must have replied originally)
+                        resolved = _get_user_id_from_reply(data)
+                        if resolved:
+                            target_uid, target_nick = resolved
         
-                            # Get target user from reply (original message)
-                            resolved = _get_user_id_from_reply(data)
-                            if resolved:
-                                target_uid, target_nick = resolved
+                            # Apply karma silently
+                            with leaderboard_lock:
+                                if target_uid not in karma_history:
+                                    karma_history[target_uid] = {"score": 0, "name": target_nick}
         
-                                # Apply karma silently
-                                with leaderboard_lock:
-                                    if target_uid not in karma_history:
-                                        karma_history[target_uid] = {"score": 0, "name": target_nick}
-        
-                                    karma_history[target_uid]["score"] += change
-                                    save_karma_to_bin(karma_history)
-                                    safe_save_json("karma_history.json", karma_history)
-        
-                        # Reset counter
-                        edited_message_counts[message_id] = 0
+                                karma_history[target_uid]["score"] += change
+                                save_karma_to_bin(karma_history)
+                                safe_save_json("karma_history.json", karma_history)
         
             return '', 200
-        
+
         # SYSTEM MESSAGES
         if sender_type == "system" or is_system_message(data):
             if is_real_system_event(text_lower):
