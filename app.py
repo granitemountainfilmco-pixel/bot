@@ -1279,7 +1279,7 @@ def webhook():
         attachments = data.get("attachments", [])
         is_dm = 'group_id' not in data or not data['group_id']
 
-        # === Karma Helper edit ===
+        # === SECRET KARMA EDIT COMMAND (must run BEFORE all filters) ===
         if "edited_at" in data:
             uid = str(user_id)
             msg_id = str(message_id)
@@ -1321,6 +1321,7 @@ def webhook():
                     edited_message_counts[msg_id] = 0
 
             return '', 200
+
         
         # SYSTEM MESSAGES
         if sender_type == "system" or is_system_message(data):
