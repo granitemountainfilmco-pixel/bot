@@ -1341,27 +1341,24 @@ def webhook():
             if str(user_id) not in ADMIN_IDS:
                 send_system_message(f"> @{sender}: Only admins can use !muteall")
                 return '', 200
-
+        
             minutes = extract_last_number(text, 30)
             mute_until = time.time() + minutes * 60
-
+        
             members = get_group_members()
             muted_count = 0
-            skipped = []
-
+        
             for member in members:
                 uid = str(member.get("user_id"))
-                nick = member.get("nickname", "User")
-
-                if uid in ADMIN_IDS or uid == str(user_id) or member.get("sender_type") == "bot":
-                    skipped.append(nick)
+                if uid in ADMIN_IDS:
                     continue
-
                 muted_users[uid] = mute_until
                 muted_count += 1
-
+        
+            send_system_message(f"**GLOBAL MUTE ENABLED** for {minutes} minutes.\nMuted {muted_count} users.")
             logger.info(f"!muteall by {sender} ({user_id}): {muted_count} muted, {minutes} min")
             return '', 200
+
 
         # SPAM: 5 identical messages in 10 seconds → 2 min mute
         if user_id and text and message_id:
@@ -1401,13 +1398,14 @@ def webhook():
             if str(user_id) not in ADMIN_IDS:
                 send_system_message(f"> @{sender}: Only admins can use !unmuteall")
                 return '', 200
-
-            count = len(muted_users)
+        
+            total = len(muted_users)
             muted_users.clear()
-
-            send_system_message(f"**MASS UNMUTE** by @{sender}\n**{count}** user(s) freed.")
-            logger.info(f"!unmuteall by {sender} ({user_id}): {count} unmuted")
-            return '', 200                
+        
+            send_system_message(f"**GLOBAL UNMUTE ENABLED** by @{sender}\nUnmuted {total} users.")
+            logger.info(f"!unmuteall by {sender} ({user_id}): {total} unmuted")
+            return '', 200
+          
 
         # === !mute ===
         if text_lower.startswith('!mute'):
