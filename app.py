@@ -171,6 +171,9 @@ def get_factorial_response(text: str) -> Optional[str]:
     except OverflowError:
         return f"{n}! is effectively infinity for my hardware."
 
+KARMAEDIT = 3
+edited_message_counts = {}
+
 # -----------------------
 # Daily Tracking Init
 # -----------------------
