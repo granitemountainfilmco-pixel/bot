@@ -1603,6 +1603,57 @@ def webhook():
             send_system_message("System messages **DISABLED** by admin.")
             return '', 200
 
+                # === !karma (admin manual adjustment) ===
+        if text_lower.startswith('!karma '):
+            if str(user_id) not in ADMIN_IDS:
+                send_system_message(f"> @{sender}: Only admins can use !karma")
+                return '', 200
+
+            # Extract the number after !karma
+            parts = text.split()
+            if len(parts) < 2:
+                send_system_message(f"> @{sender}: Usage: !karma <number> (reply to a message)")
+                return '', 200
+
+            try:
+                change = int(parts[1])
+            except ValueError:
+                send_system_message(f"> @{sender}: '{parts[1]}' is not a valid number.")
+                return '', 200
+
+            # Must be replying to a message
+            resolved = _get_user_id_from_reply(data)
+            if not resolved:
+                send_system_message(f"> @{sender}: You must reply to a user's message to adjust their karma.")
+                return '', 200
+
+            target_uid, target_nick = resolved
+
+            # Prevent self-adjustment
+            if str(target_uid) == str(user_id):
+                send_system_message(f"> @{sender}: You cannot adjust your own karma.")
+                return '', 200
+
+            # Apply change
+            with leaderboard_lock:
+                if target_uid not in karma_history:
+                    karma_history[target_uid] = {"score": 0, "name": target_nick}
+
+                karma_history[target_uid]["score"] += change
+
+                # Save everywhere
+                save_karma_to_bin(karma_history)
+                safe_save_json("karma_history.json", karma_history)
+
+            # Confirmation
+            new_score = karma_history[target_uid]["score"]
+            send_system_message(
+                f"Karma updated: {target_nick} (`{target_uid}`) now has **{new_score}** "
+                f"(change: {change:+d})"
+            )
+
+            return '', 200
+        
         # === Fun Responses ===
         if 'clean memes' in text_lower:
             send_message("We're the best!")
