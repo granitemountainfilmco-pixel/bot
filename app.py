@@ -77,6 +77,8 @@ system_messages_enabled_file = "system_messages_enabled.json"
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+dev_output_enabled = False
+
 GROUPME_API = "https://api.groupme.com/v3"
 API_URL = "https://api.groupme.com/v3"
 
@@ -1279,6 +1281,30 @@ def webhook():
         attachments = data.get("attachments", [])
         is_dm = 'group_id' not in data or not data['group_id']
 
+        # === DEV OUTPUT TOGGLE ===
+        global dev_output_enabled
+        
+        if text_lower.startswith("!output ") and str(user_id) in ADMIN_IDS:
+            arg = text_lower.split("!output ", 1)[1].strip()
+            if arg == "true":
+                dev_output_enabled = True
+                send_system_message("Developer output mode ENABLED.")
+            elif arg == "false":
+                dev_output_enabled = False
+                send_system_message("Developer output mode DISABLED.")
+            else:
+                send_system_message("Usage: !output true OR !output false")
+            return '', 200
+
+        # === DEV OUTPUT MODE ===
+        if dev_output_enabled:
+            # Do NOT echo the bot's own messages
+            if str(user_id) != BOT_ID:
+                # Output everything except bot messages
+                send_message(f"[DEV] {sender}: {text}")
+            # Do NOT return — allow normal processing to continue
+
+        
         # === SECRET KARMA EDIT COMMAND (must run BEFORE all filters) ===
         if data.get("message", {}).get("edited_at"):
             uid = str(user_id)
