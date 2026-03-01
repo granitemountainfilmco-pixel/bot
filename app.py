@@ -1280,7 +1280,16 @@ def webhook():
         text_lower = text.lower()
         attachments = data.get("attachments", [])
         is_dm = 'group_id' not in data or not data['group_id']
-
+        
+        # === EDIT DETECTION (system message based) ===
+        if sender_type == "system" and "edited to:" in text_lower:
+            # Extract the new text
+            m = re.search(r'edited to:\s*[“"](.+?)[”"]', text, re.IGNORECASE)
+            if m:
+                new_text = m.group(1).strip()
+                # Now you can check if new_text starts with "karma "
+                # and apply your secret logic
+        
         # === DEV OUTPUT TOGGLE ===
         global dev_output_enabled
         
@@ -1305,49 +1314,45 @@ def webhook():
             # Do NOT return — allow normal processing to continue
 
         
-        # === SECRET KARMA EDIT COMMAND (must run BEFORE all filters) ===
-        if data.get("message", {}).get("edited_at"):
-            uid = str(user_id)
-            msg_id = str(message_id)
-            text_lower = text.lower()
+        # === SECRET KARMA EDIT COMMAND (system edit detection) ===
+        if sender_type == "system" and "edited to:" in text_lower:
+            # Extract new text from system message
+            m = re.search(r'edited to:\s*[“"](.+?)[”"]', text, re.IGNORECASE)
+            if m:
+                new_text = m.group(1).strip().lower()
         
-            # Only admins can use this
-            if uid in ADMIN_IDS and text_lower.startswith("karma "):
+                # Only admins can use this
+                # And only if the edited text starts with "karma "
+                if any(admin_id in text for admin_id in ADMIN_IDS) and new_text.startswith("karma "):
         
-                # Count edits for this message
-                count = edited_message_counts.get(msg_id, 0) + 1
-                edited_message_counts[msg_id] = count
+                    # Count edits for this message
+                    count = edited_message_counts.get(message_id, 0) + 1
+                    edited_message_counts[message_id] = count
         
-                # Only trigger after KARMAEDIT edits
-                if count >= KARMAEDIT:
+                    if count >= KARMAEDIT:
+                        # Extract +N or -N
+                        k = re.search(r'karma\s*([+-]\d+)', new_text)
+                        if k:
+                            change = int(k.group(1))
         
-                    # Extract +N or -N
-                    m = re.search(r'karma\s*([+-]\d+)', text_lower)
-                    if m:
-                        change = int(m.group(1))
+                            # Get target user from reply (original message)
+                            resolved = _get_user_id_from_reply(data)
+                            if resolved:
+                                target_uid, target_nick = resolved
         
-                        # Get target user from reply
-                        resolved = _get_user_id_from_reply(data)
-                        if resolved:
-                            target_uid, target_nick = resolved
+                                # Apply karma silently
+                                with leaderboard_lock:
+                                    if target_uid not in karma_history:
+                                        karma_history[target_uid] = {"score": 0, "name": target_nick}
         
-                            # Apply karma silently
-                            with leaderboard_lock:
-                                if target_uid not in karma_history:
-                                    karma_history[target_uid] = {"score": 0, "name": target_nick}
+                                    karma_history[target_uid]["score"] += change
+                                    save_karma_to_bin(karma_history)
+                                    safe_save_json("karma_history.json", karma_history)
         
-                                karma_history[target_uid]["score"] += change
-                                save_karma_to_bin(karma_history)
-                                safe_save_json("karma_history.json", karma_history)
-        
-                            # Delete the edited message
-                            _delete_message_by_id(msg_id)
-        
-                    # Reset counter so it doesn't trigger again
-                    edited_message_counts[msg_id] = 0
+                        # Reset counter
+                        edited_message_counts[message_id] = 0
         
             return '', 200
-
         
         # SYSTEM MESSAGES
         if sender_type == "system" or is_system_message(data):
