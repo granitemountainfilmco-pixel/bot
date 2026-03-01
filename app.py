@@ -1604,8 +1604,8 @@ def webhook():
             return '', 200
 
                 # === !karma (admin manual adjustment) ===
-        if text_lower.startswith('!karma '):
-            if str(user_id) not in ADMIN_IDS:
+        if text_lower.startswith('!karma'):
+            if str(user_id) not '119189324':
                 send_system_message(f"> @{sender}: Only admins can use !karma")
                 return '', 200
 
