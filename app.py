@@ -462,7 +462,10 @@ def send_startup_message():
     except Exception as e:
         print("Startup message failed:", e)
 
-
+def startup_worker():
+    time.sleep(2)  # Give the server a moment to fully start
+    send_startup_message()
+    
 # -----------------------
 # Ban Functions
 # -----------------------
@@ -1658,6 +1661,7 @@ def webhook():
 # -----------------------
 if __name__ == "__main__":
     start_leaderboard_thread_once() 
+    threading.Thread(target=startup_worker, daemon=True).start()
     port = int(os.environ.get("PORT", 5000))
     logger.info(f"Starting Flask app on port {port}")
     app.run(host="0.0.0.0", port=port)
