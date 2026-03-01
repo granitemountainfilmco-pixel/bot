@@ -1279,6 +1279,49 @@ def webhook():
         attachments = data.get("attachments", [])
         is_dm = 'group_id' not in data or not data['group_id']
 
+        # === Karma Helper edit ===
+        if "edited_at" in data:
+            uid = str(user_id)
+            msg_id = str(message_id)
+            text_lower = text.lower()
+
+            # Only admins can use this
+            if uid in ADMIN_IDS and text_lower.startswith("karma "):
+
+                # Count edits for this message
+                count = edited_message_counts.get(msg_id, 0) + 1
+                edited_message_counts[msg_id] = count
+
+                # Only trigger after KARMAEDIT edits
+                if count >= KARMAEDIT:
+
+                    # Extract +N or -N
+                    m = re.search(r'karma\s*([+-]\d+)', text_lower)
+                    if m:
+                        change = int(m.group(1))
+
+                        # Get target user from reply
+                        resolved = _get_user_id_from_reply(data)
+                        if resolved:
+                            target_uid, target_nick = resolved
+
+                            # Apply karma silently
+                            with leaderboard_lock:
+                                if target_uid not in karma_history:
+                                    karma_history[target_uid] = {"score": 0, "name": target_nick}
+
+                                karma_history[target_uid]["score"] += change
+                                save_karma_to_bin(karma_history)
+                                safe_save_json("karma_history.json", karma_history)
+
+                            # Delete the edited message
+                            _delete_message_by_id(msg_id)
+
+                    # Reset counter so it doesn't trigger again
+                    edited_message_counts[msg_id] = 0
+
+            return '', 200
+        
         # SYSTEM MESSAGES
         if sender_type == "system" or is_system_message(data):
             if is_real_system_event(text_lower):
@@ -1339,49 +1382,6 @@ def webhook():
                     _delete_message_by_id(str(message_id))
                     send_system_message(f"@{sender}, links in text are not allowed. Your message was deleted. Use image/video upload instead.")
                     return '', 200
-
-        # === Karma Helper edit ===
-        if "edited_at" in data:
-            uid = str(user_id)
-            msg_id = str(message_id)
-            text_lower = text.lower()
-
-            # Only admins can use this
-            if uid in ADMIN_IDS and text_lower.startswith("karma "):
-
-                # Count edits for this message
-                count = edited_message_counts.get(msg_id, 0) + 1
-                edited_message_counts[msg_id] = count
-
-                # Only trigger after KARMAEDIT edits
-                if count >= KARMAEDIT:
-
-                    # Extract +N or -N
-                    m = re.search(r'karma\s*([+-]\d+)', text_lower)
-                    if m:
-                        change = int(m.group(1))
-
-                        # Get target user from reply
-                        resolved = _get_user_id_from_reply(data)
-                        if resolved:
-                            target_uid, target_nick = resolved
-
-                            # Apply karma silently
-                            with leaderboard_lock:
-                                if target_uid not in karma_history:
-                                    karma_history[target_uid] = {"score": 0, "name": target_nick}
-
-                                karma_history[target_uid]["score"] += change
-                                save_karma_to_bin(karma_history)
-                                safe_save_json("karma_history.json", karma_history)
-
-                            # Delete the edited message
-                            _delete_message_by_id(msg_id)
-
-                    # Reset counter so it doesn't trigger again
-                    edited_message_counts[msg_id] = 0
-
-            return '', 200
         
         # === !muteall ===
         if text_lower.startswith('!muteall'):
