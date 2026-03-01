@@ -77,8 +77,6 @@ system_messages_enabled_file = "system_messages_enabled.json"
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-dev_output_enabled = False
-
 GROUPME_API = "https://api.groupme.com/v3"
 API_URL = "https://api.groupme.com/v3"
 
@@ -172,9 +170,6 @@ def get_factorial_response(text: str) -> Optional[str]:
         return f"{n}! ≈ {mantissa:.4f} × 10^{exponent} ({digits:,} digits)"
     except OverflowError:
         return f"{n}! is effectively infinity for my hardware."
-
-KARMAEDIT = 3
-edited_message_counts = {}
 
 # -----------------------
 # Daily Tracking Init
@@ -786,7 +781,6 @@ def fuzzy_find_member(target_alias: str) -> Optional[Tuple[str, str]]:
 # -----------------------
 # Admin Commands
 # -----------------------
-
 def get_user_id(target_alias: str, sender_name: str, sender_id: str, original_text: str) -> bool:
     if str(sender_id) not in ADMIN_IDS:
         send_system_message(f"> @{sender_name}: {original_text}\nError: Only admins can use this command")
@@ -1280,66 +1274,6 @@ def webhook():
         text_lower = text.lower()
         attachments = data.get("attachments", [])
         is_dm = 'group_id' not in data or not data['group_id']
-        
-        # === EDIT DETECTION (system message based) ===
-        if sender_type == "system" and "edited to:" in text_lower:
-            # Extract the new text
-            m = re.search(r'edited to:\s*[“"](.+?)[”"]', text, re.IGNORECASE)
-            if m:
-                new_text = m.group(1).strip()
-                # Now you can check if new_text starts with "karma "
-                # and apply your secret logic
-        
-        # === DEV OUTPUT TOGGLE ===
-        global dev_output_enabled
-        
-        if text_lower.startswith("!output ") and str(user_id) in ADMIN_IDS:
-            arg = text_lower.split("!output ", 1)[1].strip()
-            if arg == "true":
-                dev_output_enabled = True
-                send_system_message("Developer output mode ENABLED.")
-            elif arg == "false":
-                dev_output_enabled = False
-                send_system_message("Developer output mode DISABLED.")
-            else:
-                send_system_message("Usage: !output true OR !output false")
-            return '', 200
-
-        # === DEV OUTPUT MODE ===
-        if dev_output_enabled:
-            # Do NOT echo the bot's own messages
-            if str(user_id) != BOT_ID:
-                # Output everything except bot messages
-                send_message(f"[DEV] {sender}: {text}")
-            # Do NOT return — allow normal processing to continue
-
-        
-        # === ADMIN KARMA EDIT (reply-based, reliable) ===
-        if user_id in ADMIN_IDS:
-            m = re.search(r'^karma\s*([+-]\s*\d+)', text.lower())
-            if m:
-                delta = int(m.group(1).replace(" ", ""))
-        
-                # Must be replying to a message
-                replied = _find_replied_message(data)
-                if replied:
-                    target_uid = str(replied["user_id"])
-                    target_name = replied.get("name", "Unknown")
-        
-                    with leaderboard_lock:
-                        if target_uid not in karma_history:
-                            karma_history[target_uid] = {"score": 0, "name": target_name}
-        
-                        karma_history[target_uid]["score"] += delta
-        
-                        save_karma_to_bin(karma_history)
-                        safe_save_json("karma_history.json", karma_history)
-        
-                    send_system_message(
-                        f"Karma updated for {target_name}: {delta:+d} (now {karma_history[target_uid]['score']})"
-                    )
-        
-                return '', 200
 
         # SYSTEM MESSAGES
         if sender_type == "system" or is_system_message(data):
@@ -1401,7 +1335,7 @@ def webhook():
                     _delete_message_by_id(str(message_id))
                     send_system_message(f"@{sender}, links in text are not allowed. Your message was deleted. Use image/video upload instead.")
                     return '', 200
-        
+
         # === !muteall ===
         if text_lower.startswith('!muteall'):
             if str(user_id) not in ADMIN_IDS:
@@ -1716,8 +1650,6 @@ def webhook():
     except Exception as e:
         logger.error(f"Webhook error: {e}")
         return '', 500
-
-
 
 # -----------------------
 # Flask App Run
