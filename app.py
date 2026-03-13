@@ -1644,6 +1644,8 @@ def webhook():
             send_message("I couldn't agree more")
         elif 'sophie' in text_lower:
             send_message("(Sigh)")
+        elif 'anygays' in text_lower:
+            send_message("L-BEATZ WAS GAY")
         
         if text_lower.strip() == '!leaderboard':
             msg = _build_leaderboard_message()
