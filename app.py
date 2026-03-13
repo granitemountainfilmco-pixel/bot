@@ -1642,7 +1642,7 @@ def webhook():
             send_message("TOG is the chillest admin bro")
         elif 'locked in is cute' in text_lower:
             send_message("I couldn't agree more")
-        elif 'Sophie' in text_lower:
+        elif 'sophie' in text_lower:
             send_message("(Sigh)")
         
         if text_lower.strip() == '!leaderboard':
