@@ -1646,6 +1646,21 @@ def webhook():
             send_message("(Sigh)")
         elif 'anygays' in text_lower:
             send_message("L-BEATZ WAS GAY")
+
+        """
+        tese lines are just to bulk up clanker guy just so its not 67kb.
+        heh. 67.
+        heh hehe
+        HAHAHAH 67676767676767676767677
+        *Gets Shot*
+        Why am i doing this in a github repository?
+        am i a moron?
+        no.
+        IM NOT A MORON
+        "YES YOU ARE! YOUR THE MORON DESIGNED TO MAKE ME AN IDIOT!"
+        ill stop now ig.
+        """
+        
         
         if text_lower.strip() == '!leaderboard':
             msg = _build_leaderboard_message()
