@@ -1646,42 +1646,6 @@ def webhook():
             send_message("(Sigh)")
         elif 'anygays' in text_lower:
             send_message("L-BEATZ WAS GAY")
-
-        """
-        tese lines are just to bulk up clanker guy just so its not 67kb.
-        heh. 67.
-        heh hehe
-        HAHAHAH 67676767676767676767677
-        *Gets Shot*
-        Why am i doing this in a github repository?
-        am i a moron?
-        no.
-        IM NOT A MORON
-        "YES YOU ARE! YOUR THE MORON DESIGNED TO MAKE ME AN IDIOT!"
-        ill stop now ig.
-
-
-        This is KingFifer40 next:
-        67.3KB is not enough, IT NEEDS MORE
-        The FitnessGram™ Pacer Test is a multistage aerobic capacity test that progressively gets more difficult as it continues. 
-        The 20 meter pacer test will begin in 30 seconds. 
-        Line up at the start. 
-        The running speed starts slowly, 
-        but gets faster each minute after you hear this signal. 
-        [beep] A single lap should be completed each time you hear this sound. 
-        [ding] Remember to run in a straight line, and run as long as possible. 
-        The second time you fail to complete a lap before the sound, your test is over. 
-        The test will begin on the word start. On your mark, get ready, start.
-
-
-        AHHHHH NO MORE UNHEALTHY WEIGHT CLANKER GAIN SOME WEIGHT! NO MORE 6-7!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-        
-        
-        
-        can we get 69
-        nice nice  nice nice  nice nice  nice nice  nice nice  nice nice  nice nice  nice nice  nice nice  nice nice  nice nice  nice nice  nice nice  nice nice  nice nice  nice nice  nice nice  nice nice  nice nice  nice nice  nice nice  nice nice  nice nice  nice nice  nice nice  nice nice  nice nice  nice nice  nice nice  nice nice  nice nice  nice nice  nice nice  nice nice  nice nice 
-        """
-        
         
         if text_lower.strip() == '!leaderboard':
             msg = _build_leaderboard_message()
@@ -1710,3 +1674,33 @@ if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     logger.info(f"Starting Flask app on port {port}")
     app.run(host="0.0.0.0", port=port)
+
+
+#        tese lines are just to bulk up clanker guy just so its not 67kb.
+#        heh. 67.
+#        heh hehe
+#        HAHAHAH 67676767676767676767677
+#        *Gets Shot*
+#        Why am i doing this in a github repository?
+#        am i a moron?
+#        no.
+#        IM NOT A MORON
+#        "YES YOU ARE! YOUR THE MORON DESIGNED TO MAKE ME AN IDIOT!"
+#        ill stop now ig.
+
+
+#        This is KingFifer40 next:
+#        67.3KB is not enough, IT NEEDS MORE
+#        The FitnessGram™ Pacer Test is a multistage aerobic capacity test that progressively gets more difficult as it continues. 
+#        The 20 meter pacer test will begin in 30 seconds. 
+#        Line up at the start. 
+#        The running speed starts slowly, 
+#        but gets faster each minute after you hear this signal. 
+#        [beep] A single lap should be completed each time you hear this sound. 
+#        [ding] Remember to run in a straight line, and run as long as possible. 
+#        The second time you fail to complete a lap before the sound, your test is over. 
+#        The test will begin on the word start. On your mark, get ready, start.
+#       AHHHHH NO MORE UNHEALTHY WEIGHT CLANKER GAIN SOME WEIGHT! NO MORE 6-7!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!        
+#        can we get 69
+#        nice nice  nice nice  nice nice  nice nice  nice nice  nice nice  nice nice  nice nice  nice nice  nice nice  nice nice  nice nice  nice nice  nice nice  nice nice  nice nice  nice nice  nice nice  nice nice  nice nice  nice nice  nice nice  nice nice  nice nice  nice nice  nice nice  nice nice  nice nice  nice nice  nice nice  nice nice  nice nice  nice nice  nice nice  nice nice 
+# Extra Line, Genuine broke it and I know that # comments out lines better, and also """ kinda breaks if not placed in the correct spot -KingFifer40
