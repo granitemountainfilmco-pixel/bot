@@ -204,31 +204,21 @@ _initialize_daily_tracking()
 def load_karma_from_bin():
     url = f"https://api.jsonbin.io/v3/b/{JSONBIN_BIN_ID}/latest"
     headers = {
-        "X-Master-Key": JSONBIN_MASTER_KEY,
-        "X-Bin-Meta": "false"
+        "X-Master-Key": JSONBIN_MASTER_KEY, 
+        "X-Bin-Meta": "false"  # This ensures we get only our data, no metadata
     }
     try:
         resp = requests.get(url, headers=headers, timeout=8)
-        if resp.status_code != 200:
+        if resp.status_code == 200:
+            data = resp.json()
+            # Objectively check if it's the right format
+            if isinstance(data, dict):
+                return data
+        else:
             logger.error(f"JSONBin Load Failed: {resp.status_code} - {resp.text}")
-            return None
-
-        data = resp.json()
-
-        # Handle {"record": {...}} wrapper if JSONBin returns it
-        if isinstance(data, dict) and "record" in data and isinstance(data["record"], dict):
-            data = data["record"]
-
-        # Only accept non-empty dicts
-        if isinstance(data, dict) and data:
-            return data
-
-        logger.warning("JSONBin returned empty or invalid karma payload; keeping existing in-memory data.")
-        return None
-
     except Exception as e:
         logger.error(f"Karma Load Error: {e}")
-        return None
+    return {}
 
 def save_karma_to_bin(karma_data):
     url = f"https://api.jsonbin.io/v3/b/{JSONBIN_BIN_ID}"
@@ -236,22 +226,22 @@ def save_karma_to_bin(karma_data):
         "X-Master-Key": JSONBIN_MASTER_KEY,
         "Content-Type": "application/json"
     }
+    # Save the data directly without the "karma" wrapper to keep it clean
     try:
         resp = requests.put(url, json=karma_data, headers=headers, timeout=10)
         if resp.status_code != 200:
             logger.error(f"JSONBin Save Failed: {resp.status_code} - {resp.text}")
     except Exception as e:
         logger.error(f"Critical Karma Save Error: {e}")
-
-
 def sync_karma():
+    """Force a refresh from JSONBin to memory."""
     global karma_history
-    with leaderboard_lock:
-        cloud_data = load_karma_from_bin()
-        if cloud_data:
-            karma_history = cloud_data
-            safe_save_json("karma_history.json", karma_history)
-            logger.info("Memory and local cache synced with JSONBin.")
+    cloud_data = load_karma_from_bin()
+    if cloud_data:
+        karma_history = cloud_data
+        # Sync the local file to match the cloud truth
+        safe_save_json("karma_history.json", karma_history)
+        logger.info("Memory and local cache synced with JSONBin.")
 
 karma_history: Dict[str, Dict[str, int]] = load_karma_from_bin()
 
